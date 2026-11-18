@@ -114,6 +114,47 @@ need_running() {   # need_running <container>
   container_running "$1" || die "container $1 is not running (start it with: mirabelle run ...)"
 }
 
+# --- force -----------------------------------------------------------------
+
+# take_force "$@": removes -f / --force from the arguments.
+# Sets MB_FORCE (0 or 1) and MB_REST (the other arguments).
+take_force() {
+  MB_FORCE=0; MB_REST=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      -f|--force) MB_FORCE=1 ;;
+      *) MB_REST+=("$a") ;;
+    esac
+  done
+}
+
+# Containers made by mirabelle (running or not) whose label <key> holds
+# <value> (labels holding several names, like mirabelle.libraries, count
+# each name). Prints their names. Prints nothing if Docker is not reachable.
+containers_using() {   # containers_using <label key> <value>
+  command -v docker >/dev/null && docker info >/dev/null 2>&1 || return 0
+  docker ps -a --filter label=mirabelle.project --format "{{.Names}}\t{{.Label \"$1\"}}" |
+    awk -F'\t' -v v="$2" '{ n = split($2, w, " "); for (i = 1; i <= n; i++) if (w[i] == v) { print $1; break } }'
+}
+
+# Refuses to remove something a container uses, unless -f.
+#   guard_in_use <what> <label key> <value>
+guard_in_use() {
+  local what=$1 key=$2 value=$3 used
+  if ! { command -v docker >/dev/null && docker info >/dev/null 2>&1; }; then
+    warn "Docker is not reachable: could not check whether a container uses $what"
+    return 0
+  fi
+  used=$(containers_using "$key" "$value" | paste -sd' ')
+  [[ -n "$used" ]] || return 0
+  if (( MB_FORCE )); then
+    warn "$what is used by: $used (-f: going ahead; those containers keep what they already have until stopped)"
+  else
+    die "$what is used by: $used. Stop them first (mirabelle stop -n <project>), or use -f"
+  fi
+}
+
 # --- global flags -----------------------------------------------------------
 
 # Removes -v / --dry-run from anywhere in the arguments, up to a "--".

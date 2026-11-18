@@ -57,7 +57,7 @@ prepare_dirs() {   # prepare_dirs <project>
 }
 
 cmd_run() {
-  local account="" identity="" name="" previous=0
+  local account="" identity="" name="" previous=0 force=0
   local -a ports=() libraries=()
   while (( $# )); do
     case "$1" in
@@ -67,7 +67,8 @@ cmd_run() {
       -l) libraries+=("${2:?-l needs a library name}"); shift 2 ;;
       -n) name=${2:?-n needs a name}; shift 2 ;;
       --previous) previous=1; shift ;;
-      *) die "run: unknown option '$1' (usage: mirabelle run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous])" ;;
+      -f|--force) force=1; shift ;;
+      *) die "run: unknown option '$1' (usage: mirabelle run [-f] -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous])" ;;
     esac
   done
   [[ -n "$account" ]]  || die "run: -a <account> is required (see: mirabelle account ls)"
@@ -77,7 +78,13 @@ cmd_run() {
   local project; project=$(project_name "$name")
   [[ "$project" != upgrade ]] || die "the name 'upgrade' is reserved for the upgrade project; use -n <other name>"
   local c; c=$(container_of "$project")
-  container_exists "$c" && die "container $c already exists (stop it first: mirabelle stop${name:+ -n $name})"
+  if container_exists "$c"; then
+    (( force )) || die "container $c already exists (stop it first: mirabelle stop${name:+ -n $name}; or replace it: mirabelle run -f ...)"
+    docker exec -u dev "$c" tmux has-session -t claude 2>/dev/null &&
+      warn "a Claude session is running in $c; it ends now (its conversation is kept)"
+    run docker rm -f "$c" >/dev/null
+    (( MB_DRY )) || line replaced "removed the existing container $c (-f)"
+  fi
   [[ -f "$MB_SECRETS/accounts/$account" ]] || die "no account '$account' (see: mirabelle account ls)"
   [[ -f "$MB_SETUP/identities/$identity/gitconfig" ]] || die "no identity '$identity' (see: mirabelle identity ls)"
 

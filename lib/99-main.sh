@@ -6,8 +6,8 @@ usage() {
 mirabelle: Claude in a container, per project folder, behind a firewall.
 
 Working in a folder (uses the folder's name, or -n <name>)
-  run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]
-                     start this folder's container, with its firewall
+  run [-f] -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]
+                     start this folder's container, with its firewall (-f: replace it if it exists)
   code               open VS Code attached to the running container
   claude [-- args]   open Claude in the running container (again to reattach)
   shell              open a shell in the running container
@@ -23,9 +23,9 @@ Image
   prune                            delete the previous images no longer used
 
 Accounts, identities, sites
-  account add|ls|rm <name>                     Claude accounts
-  identity add|ls|rm <name>                    git identities
-  host add|ls|rm <identity> [<https-url>]      git hosts of an identity
+  account add|ls|rm [-f] <name>                Claude accounts
+  identity add|ls|rm [-f] <name>               git identities
+  host add|ls|rm [-f] <identity> [<https-url>] git hosts of an identity
   site add|ls|rm <domain> [-n <project>]       sites the firewall allows
   library add|ls|rm [-f] <name>                libraries, picked per run with -l
 
@@ -44,6 +44,8 @@ Save and sync (plain git)
 
 Every command accepts -v (show the docker and git commands) and --dry-run
 (show them without running anything that changes something).
+-f / --force overrides a refusal: add replaces what exists, rm removes what a
+container still uses (or, for a library, work not pushed). It still asks.
 Full reference: setup/docs/REFERENCE.md
 EOF
 }

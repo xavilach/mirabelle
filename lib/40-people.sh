@@ -15,15 +15,19 @@ cmd_account() {
     add) account_add "$@" ;;
     ls)  account_ls "$@" ;;
     rm)  account_rm "$@" ;;
-    *)   die "usage: mirabelle account add|ls|rm <name>" ;;
+    *)   die "usage: mirabelle account add|ls|rm [-f] <name>" ;;
   esac
 }
 
 account_add() {
-  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle account add <name>"
+  take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
+  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle account add [-f] <name>"
   need_name account "$name"; need_docker; need_not_root
   local file="$MB_SECRETS/accounts/$name"
-  [[ ! -e "$file" ]] || die "account '$name' already exists ($file)"
+  if [[ -e "$file" ]]; then
+    (( MB_FORCE )) || die "account '$name' already exists ($file); to log in again and replace its token: mirabelle account add -f $name"
+    line replacing "the token of account '$name' (the old one is kept until the new one is saved)"
+  fi
   image_exists mirabelle:latest || die "the image does not exist yet: run mirabelle build first"
   local project="account-$name" c; c=$(container_of "account-$name")
   container_exists "$c" && die "container $c exists from an earlier attempt: remove it with docker rm -f $c"
@@ -58,6 +62,9 @@ account_add() {
   mkdir -p "$MB_SECRETS/accounts"; chmod 700 "$MB_SECRETS" "$MB_SECRETS/accounts"
   ( umask 077; printf '%s\n' "$token" > "$file" )
   line saved "$file (readable only by you)"
+  (( MB_FORCE )) && [[ -n "$(containers_using mirabelle.account "$name")" ]] &&
+    say "Containers using '$name' keep the old token until: mirabelle stop, then mirabelle run ..."
+  return 0
 }
 
 account_ls() {
@@ -71,9 +78,11 @@ account_ls() {
 }
 
 account_rm() {
-  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle account rm <name>"
+  take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
+  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle account rm [-f] <name>"
   local file="$MB_SECRETS/accounts/$name"
   [[ -f "$file" ]] || die "no account '$name'"
+  guard_in_use "account '$name'" mirabelle.account "$name"
   confirm "Delete account '$name' ($file)?" || { say "nothing deleted"; return 0; }
   run rm -f "$file"
   line deleted "$file"
@@ -88,7 +97,7 @@ cmd_identity() {
     add) identity_add "$@" ;;
     ls)  identity_ls "$@" ;;
     rm)  identity_rm "$@" ;;
-    *)   die "usage: mirabelle identity add|ls|rm <name>" ;;
+    *)   die "usage: mirabelle identity add|ls|rm [-f] <name>" ;;
   esac
 }
 
@@ -141,9 +150,11 @@ identity_ls() {
 }
 
 identity_rm() {
-  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle identity rm <name>"
+  take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
+  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle identity rm [-f] <name>"
   local dir="$MB_SETUP/identities/$name" sec="$MB_SECRETS/identities/$name"
   [[ -d "$dir" ]] || die "no identity '$name'"
+  guard_in_use "identity '$name'" mirabelle.identity "$name"
   confirm "Delete identity '$name' ($dir and its tokens)?" || { say "nothing deleted"; return 0; }
   run rm -rf "$dir" "$sec"
   line deleted "$dir"
@@ -170,7 +181,7 @@ cmd_host() {
     add) host_add "$@" ;;
     ls)  host_ls "$@" ;;
     rm)  host_rm "$@" ;;
-    *)   die "usage: mirabelle host add|ls|rm <identity> [<https-url>]" ;;
+    *)   die "usage: mirabelle host add|ls|rm [-f] <identity> [<https-url>]" ;;
   esac
 }
 
@@ -183,11 +194,17 @@ parse_https_url() {   # sets H_HOST H_PORT H_URL
 }
 
 host_add() {
-  [[ $# -eq 2 ]] || die "usage: mirabelle host add <identity> <https-url>"
+  take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
+  [[ $# -eq 2 ]] || die "usage: mirabelle host add [-f] <identity> <https-url>"
   local id=$1; parse_https_url "$2"
   local dir="$MB_SETUP/identities/$id" sec="$MB_SECRETS/identities/$id"
   [[ -f "$dir/gitconfig" ]] || die "no identity '$id'"
-  grep -q "^$H_URL " "$dir/hosts.txt" 2>/dev/null && die "$H_URL is already a host of '$id' (remove it first: mirabelle host rm $id $H_URL)"
+  local replace=0
+  if grep -q "^$H_URL " "$dir/hosts.txt" 2>/dev/null; then
+    (( MB_FORCE )) || die "$H_URL is already a host of '$id'; to replace its token: mirabelle host add -f $id $H_URL"
+    replace=1
+    line replacing "$H_URL of '$id' (the old entry is kept until the new one is complete)"
+  fi
   valid_domain "$H_HOST" || [[ "$H_HOST" =~ ^[0-9.]+$ ]] || die "'$H_HOST' is not a valid host name"
 
   local user token
@@ -231,6 +248,10 @@ host_add() {
   fi
   (( MB_DRY )) && return 0
 
+  if (( replace )); then
+    host_drop "$dir" "$sec"
+    line removed "the old entry of $H_URL"
+  fi
   if [[ "$trust" == saved ]]; then
     printf '%s\n' "$chain" > "$dir/ca/$H_HOST.crt"
     line saved "$dir/ca/$H_HOST.crt"
@@ -256,18 +277,27 @@ host_ls() {
   (( n )) || say "no host for '$1' (add one: mirabelle host add $1 https://...)"
 }
 
-host_rm() {
-  [[ $# -eq 2 ]] || die "usage: mirabelle host rm <identity> <https-url>"
-  local id=$1; parse_https_url "$2"
-  local dir="$MB_SETUP/identities/$id" sec="$MB_SECRETS/identities/$id"
-  grep -q "^$H_URL " "$dir/hosts.txt" 2>/dev/null || die "$H_URL is not a host of '$id'"
-  confirm "Remove $H_URL from '$id' (its token and certificate too)?" || { say "nothing removed"; return 0; }
-  (( MB_DRY )) && return 0
-  local tmp; tmp=$(mktemp)
+# Removes the host H_URL / H_HOST from an identity: its line, token, certificate.
+host_drop() {   # host_drop <identity dir> <secrets dir>
+  local dir=$1 sec=$2 tmp
+  tmp=$(mktemp)
   grep -v "^$H_URL " "$dir/hosts.txt" > "$tmp" || true; cat "$tmp" > "$dir/hosts.txt"
   grep -v "@${H_URL#https://}\$" "$sec/git-credentials" > "$tmp" || true; cat "$tmp" > "$sec/git-credentials"
   rm -f "$tmp" "$dir/ca/$H_HOST.crt"
+}
+
+host_rm() {
+  take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
+  [[ $# -eq 2 ]] || die "usage: mirabelle host rm [-f] <identity> <https-url>"
+  local id=$1; parse_https_url "$2"
+  local dir="$MB_SETUP/identities/$id" sec="$MB_SECRETS/identities/$id"
+  grep -q "^$H_URL " "$dir/hosts.txt" 2>/dev/null || die "$H_URL is not a host of '$id'"
+  guard_in_use "identity '$id'" mirabelle.identity "$id"
+  confirm "Remove $H_URL from '$id' (its token and certificate too)?" || { say "nothing removed"; return 0; }
+  (( MB_DRY )) && return 0
+  host_drop "$dir" "$sec"
   line removed "$H_URL from $dir/hosts.txt, its token, and its certificate if any"
+  next "running containers using '$id' lose its firewall entry after: mirabelle lock"
 }
 
 # --- sites ------------------------------------------------------------------

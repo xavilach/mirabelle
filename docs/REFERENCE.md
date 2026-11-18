@@ -70,6 +70,7 @@ Summary, glossary, every command with what it does and which files it reads and 
 Notes that apply to all of them:
 
 - `-v` prints the exact `docker` and `git` commands. `--dry-run` prints them and runs nothing.
+- `-f` / `--force` (on `run`, `account add`, `host add` and every `rm`) overrides a refusal. On `run` and `add` it replaces what already exists; on `rm` it removes something a container still uses (and, for a library, work not pushed). It never skips a yes/no question, and never bypasses the firewall test.
 - Commands that act on a container use the current folder's name, or `-n <name>`.
 - "Refuses when" means: prints the reason and the command to run instead, and changes nothing.
 - Paths are relative to `~/mirabelle/` unless they start with `/` (inside the container) or `~`.
@@ -118,8 +119,8 @@ Deletes the previous images and their build records, after listing them and your
 
 ### 3.2 Accounts, identities, hosts, sites
 
-#### `mirabelle account add <name>`
-Adds a Claude account.
+#### `mirabelle account add [-f] <name>`
+Adds a Claude account. With `-f`, logs in again for an existing account and replaces its token.
 
 1. Starts a temporary container with the firewall on.
 2. Runs Claude's token login in it. You open the address it shows in your browser and approve.
@@ -127,14 +128,15 @@ Adds a Claude account.
 4. Removes the temporary container.
 
 - **Reads:** the image, `setup/sites.txt`, `setup/lock/`.
-- **Writes:** `secrets/accounts/<name>`.
-- **Refuses when:** that account name exists, or the image is missing.
+- **Writes:** `secrets/accounts/<name>` (with `-f`, only once the new token is pasted: the old one is kept if you stop before).
+- **Refuses when:** that account name exists (unless `-f`), or the image is missing.
 
 #### `mirabelle account ls`
 Lists account names. Never prints a token. **Reads:** `secrets/accounts/`. **Writes:** nothing.
 
-#### `mirabelle account rm <name>`
-Deletes an account after your yes. **Writes:** deletes `secrets/accounts/<name>`. Running containers keep the token they were started with until stopped.
+#### `mirabelle account rm [-f] <name>`
+Deletes an account after your yes. **Writes:** deletes `secrets/accounts/<name>`.
+- **Refuses when** a mirabelle container uses the account (it names them). With `-f`, deletes it anyway; those containers keep the token they were started with until stopped.
 
 #### `mirabelle identity add <name>`
 Adds a git identity. Asks for the git name and email.
@@ -145,11 +147,12 @@ Adds a git identity. Asks for the git name and email.
 #### `mirabelle identity ls`
 Lists identities with their name and email. **Reads:** `setup/identities/`. **Writes:** nothing.
 
-#### `mirabelle identity rm <name>`
+#### `mirabelle identity rm [-f] <name>`
 Deletes an identity after your yes. **Writes:** deletes `setup/identities/<name>/` and `secrets/identities/<name>/`.
+- **Refuses when** a mirabelle container uses the identity. With `-f`, deletes it anyway (those containers lose its files).
 
-#### `mirabelle host add <identity> <https-url>`
-Allows an identity to use a git host.
+#### `mirabelle host add [-f] <identity> <https-url>`
+Allows an identity to use a git host. With `-f`, replaces an existing host: new user name, token and certificate (for an expired or rotated token).
 
 1. Asks for the user name and the token (input hidden).
 2. Connects to the host from the PC to read its certificate. If it is not publicly trusted, shows who it belongs to and its fingerprint, and asks whether to trust it.
@@ -158,13 +161,14 @@ Allows an identity to use a git host.
 - **Reads:** `setup/identities/<identity>/`.
 - **Writes:** a line in `setup/identities/<identity>/hosts.txt`; a line in `secrets/identities/<identity>/git-credentials`; if you chose to trust a certificate, `setup/identities/<identity>/ca/<host>.crt`.
 - **Does not:** test the token, or change a running container (run `mirabelle lock` for that).
-- **Refuses when:** the identity does not exist, the address is not `https://`, or the host is already listed.
+- **Refuses when:** the identity does not exist, the address is not `https://`, or the host is already listed (unless `-f`; the old entry is removed only once the new one is complete).
 
 #### `mirabelle host ls <identity>`
 Lists the identity's hosts. Never prints a token. **Reads:** `hosts.txt`. **Writes:** nothing.
 
-#### `mirabelle host rm <identity> <https-url>`
+#### `mirabelle host rm [-f] <identity> <https-url>`
 Removes a host after your yes. **Writes:** removes its lines from `hosts.txt` and `git-credentials`, and its certificate file.
+- **Refuses when** a mirabelle container uses the identity. With `-f`, removes it anyway; run `mirabelle lock` in those containers to drop its firewall entry.
 
 #### `mirabelle site add <domain> [-n <project>]`
 Adds a site to a list. **Writes:** a line in `setup/sites.txt`, or in `setup/projects/<name>/sites.txt` with `-n` (created if missing). **Does not** change a running container.
@@ -192,12 +196,12 @@ Lists the libraries: listed in setup and present, listed but not on this compute
 Removes a library from this computer and from `setup/libraries.txt`, after your yes. Its copy at the home is kept.
 
 - **Writes:** deletes `kb/libraries/<name>/`; one line of `setup/libraries.txt`.
-- **Refuses when** removing it would lose work: unsaved changes, commits not pushed, never pushed, or no home (this computer holds its only copy). It lists what would be lost.
+- **Refuses when** removing it would lose something: unsaved changes, commits not pushed, never pushed, no home (this computer holds its only copy), or still mounted in a container. It lists what would be lost.
 - **`-f` / `--force`:** removes it anyway. It still lists what will be lost and asks for your yes.
 
 ### 3.3 Working in a folder
 
-#### `mirabelle run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]`
+#### `mirabelle run [-f] -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]`
 Starts this folder's container, with its firewall. Every step is printed.
 
 1. Takes the project name from the folder name, or from `-n`.
@@ -223,7 +227,8 @@ Starts this folder's container, with its firewall. Every step is printed.
 
 - **Reads:** `secrets/accounts/<account>`, `setup/identities/<identity>/`, `setup/sites.txt`, `setup/projects/<name>/sites.txt`, `setup/lock/`, `setup/lib/inside/start.sh`, `kb/agent/claude/`, `kb/agent/start`.
 - **Writes:** `local/lock/<name>/` (`allowed.txt`, `filter`, `private.txt`, `ports.txt`, `tinyproxy.conf`); the folders in step 3; links and `.gitignore` inside `sessions/<name>/`; one Docker container. Nothing in the project folder.
-- **Refuses when:** a container with that name already exists, the image is missing, the account, identity or a library does not exist, or a library name is not valid.
+- **`-f`:** if a container with that name exists, removes it first (a Claude session running in it ends; its conversation is kept), then starts the new one.
+- **Refuses when:** a container with that name already exists (unless `-f`), the image is missing, the account, identity or a library does not exist, or a library name is not valid.
 
 #### `mirabelle lock [-n <name>]`
 Re-applies the firewall to a running container, after a list changed.

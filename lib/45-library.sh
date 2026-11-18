@@ -144,6 +144,8 @@ library_rm() {
 
   # What removing it would lose. Without -f, any of these refuses.
   local -a lost=()
+  local used; used=$(containers_using mirabelle.libraries "$name" | paste -sd' ')
+  [[ -n "$used" ]] && lost+=("its folder, still mounted in: $used (they would see it empty)")
   if [[ -d "$dir/.git" ]]; then
     local n
     n=$(git -C "$dir" status --porcelain | wc -l)

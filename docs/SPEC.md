@@ -257,12 +257,12 @@ Every command accepts `-v` and `--dry-run`. Commands that act on a container use
 | `mirabelle build [--fresh] [-n <project>]` | Builds the image, or with `-n` one project's extra layer |
 | `mirabelle images` | Lists mirabelle's images |
 | `mirabelle prune` | Deletes the images that are no longer current |
-| `mirabelle account add \| ls \| rm <name>` | Adds, lists or removes a Claude account |
-| `mirabelle identity add \| ls \| rm <name>` | Adds, lists or removes a git identity |
-| `mirabelle host add \| ls \| rm <identity> <https-url>` | Adds, lists or removes a git host for an identity |
+| `mirabelle account add \| ls \| rm [-f] <name>` | Adds, lists or removes a Claude account (`add -f`: log in again; `rm -f`: even if a container uses it) |
+| `mirabelle identity add \| ls \| rm [-f] <name>` | Adds, lists or removes a git identity (`rm -f`: even if a container uses it) |
+| `mirabelle host add \| ls \| rm [-f] <identity> <https-url>` | Adds, lists or removes a git host for an identity (`add -f`: replace its token; `rm -f`: even if in use) |
 | `mirabelle site add \| ls \| rm <domain> [-n <project>]` | Edits a list of allowed sites |
 | `mirabelle library add \| ls \| rm [-f] <name>` | Adds, lists or removes a library (`-f`: remove even with work not pushed) |
-| `mirabelle run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]` | Starts this folder's container, with its firewall |
+| `mirabelle run [-f] -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]` | Starts this folder's container, with its firewall (`-f`: replaces an existing one) |
 | `mirabelle lock` | Re-applies the firewall to the running container |
 | `mirabelle code` | Opens VS Code attached to the running container |
 | `mirabelle claude` | Opens Claude in the running container (again to reattach) |
@@ -282,7 +282,8 @@ Every command accepts `-v` and `--dry-run`. Commands that act on a container use
 | `mirabelle pull` | Pulls the repos (setup, kb/agent, sessions, libraries) |
 
 - `code`, `claude`, `shell`, `lock` and `inspect` fail with a clear message if the container is not running. They do not start it.
-- `run` fails if a container with that name is already running, or if the image is missing, and says which command to run.
+- `run` fails if a container with that name already exists (`-f` replaces it), or if the image is missing, and says which command to run.
+- **`-f` / `--force`** exists on `run`, `account add`, `host add` and every `rm`. It overrides a refusal, never a question: the command still asks for your yes where it asks. It never bypasses the firewall test.
 - `-p 8080` makes a container port reachable on the PC's `localhost`, for use outside VS Code.
 - `--previous` starts from the image as it was before the last build.
 
