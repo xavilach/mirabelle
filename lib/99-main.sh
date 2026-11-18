@@ -37,16 +37,17 @@ Upgrading mirabelle
   rollback [<tag>]       undo the last apply (or every apply after <tag>)
 
 Save and sync (plain git)
-  home [<path-or-url>]   show or set where push and pull go
-  save                   commit what is uncommitted in setup, kb/agent, sessions, libraries
-  push                   push them all
+  home [<path-or-url>]   show or set your home (config, kb/agent, sessions, libraries);
+                         the plumbing keeps its own origin (GitHub)
+  save                   commit what is uncommitted in plumbing, config, kb/agent, sessions, libraries
+  push                   push them all (the plumbing to GitHub, the rest to your home)
   pull                   pull them all (and clone libraries listed but missing)
 
 Every command accepts -v (show the docker and git commands) and --dry-run
 (show them without running anything that changes something).
 -f / --force overrides a refusal: add replaces what exists, rm removes what a
 container still uses (or, for a library, work not pushed). It still asks.
-Full reference: setup/docs/REFERENCE.md
+Full reference: plumbing/docs/REFERENCE.md
 EOF
 }
 

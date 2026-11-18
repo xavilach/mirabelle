@@ -1,6 +1,12 @@
 # shellcheck shell=bash
 # Shared helpers: output, running commands, checks, names, paths.
 
+# Three tiers:
+#   plumbing  ~/mirabelle/plumbing   the tool, from GitHub (MB_PLUMBING, set by bin/mirabelle)
+#   local     ~/mirabelle/config, kb/agent, kb/libraries/*, sessions: your data,
+#             pushed to the home you choose; secrets/ and local/ never leave this PC
+#   project   the project folder: mirabelle never writes there
+MB_CONFIG="$MB_ROOT/config"
 MB_AGENT="$MB_ROOT/kb/agent"        # the shared part of the kb
 MB_LIBRARIES="$MB_ROOT/kb/libraries" # the libraries, picked per run
 MB_SESSIONS="$MB_ROOT/sessions"

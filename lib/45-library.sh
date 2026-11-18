@@ -5,14 +5,14 @@
 # Each library is its own git repo, like kb/agent:
 #   ~/mirabelle/kb/libraries/<name>/   (with its .git inside: Claude can commit)
 #   <home>/library-<name>.git          (where push and pull go)
-# The list of libraries is setup/libraries.txt, so another computer knows
+# The list of libraries is config/libraries.txt, so another computer knows
 # which ones exist (`pull` and install.sh clone the missing ones).
 # A container sees only the libraries selected with -l, read-write, at
 # /kb/libraries/<name>.
 
-MB_LIBRARY_LIST="$MB_SETUP/libraries.txt"
+MB_LIBRARY_LIST="$MB_CONFIG/libraries.txt"
 
-library_names() {   # names in setup/libraries.txt
+library_names() {   # names in config/libraries.txt
   [[ -f "$MB_LIBRARY_LIST" ]] || return 0
   sed -e 's/#.*//' -e 's/[[:space:]]//g' "$MB_LIBRARY_LIST" | grep -v '^$' || true
 }
@@ -27,7 +27,7 @@ home_base() {
 
 # Every repo mirabelle saves, pushes and pulls, as paths under ~/mirabelle.
 all_repos() {
-  printf '%s\n' setup kb/agent sessions
+  printf '%s\n' plumbing config kb/agent sessions
   local d
   for d in "$MB_LIBRARIES"/*/; do
     [[ -d "$d/.git" ]] && printf 'kb/libraries/%s\n' "$(basename "$d")"
@@ -35,7 +35,7 @@ all_repos() {
   return 0
 }
 
-library_list_add() {   # add a name to setup/libraries.txt
+library_list_add() {   # add a name to config/libraries.txt
   library_names | grep -qx "$1" && return 0
   [[ -f "$MB_LIBRARY_LIST" ]] ||
     printf '%s\n' "# Libraries: one name per line. Each is a git repo in ~/mirabelle/kb/libraries/<name>." \

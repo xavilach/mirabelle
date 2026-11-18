@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs inside a container, as "dev", right after the firewall is set:
-#     docker exec -i -u dev <container> bash -s < setup/lib/inside/start.sh
+#     docker exec -i -u dev <container> bash -s < plumbing/lib/inside/start.sh
 # It does three things and prints each:
 #   1. trusted certificates: the system's plus the identity's (if any);
 #   2. links every entry of /kb/agent/claude into Claude's config folder (/session);

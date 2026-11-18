@@ -1,11 +1,12 @@
 # shellcheck shell=bash
 # Accounts, identities, hosts, sites.
 #   account  -> secrets/accounts/<name>               (the token, one line)
-#   identity -> setup/identities/<name>/gitconfig     (name, email, helper)
-#               setup/identities/<name>/hosts.txt     (one line per host)
-#               setup/identities/<name>/ca/           (certificates you trust)
+#   identity -> config/identities/<name>/gitconfig    (name, email, helper)
+#               config/identities/<name>/hosts.txt    (one line per host)
+#               config/identities/<name>/ca/          (certificates you trust)
 #               secrets/identities/<name>/git-credentials (tokens)
-#   site     -> setup/sites.txt, setup/projects/<name>/sites.txt
+#   site     -> config/sites.txt, config/projects/<name>/sites.txt
+#               (plumbing/sites.txt holds what the plumbing needs; read-only here)
 
 # --- accounts ---------------------------------------------------------------
 
@@ -104,7 +105,7 @@ cmd_identity() {
 identity_add() {
   local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle identity add <name>"
   need_name identity "$name"
-  local dir="$MB_SETUP/identities/$name" sec="$MB_SECRETS/identities/$name"
+  local dir="$MB_CONFIG/identities/$name" sec="$MB_SECRETS/identities/$name"
   [[ ! -e "$dir" ]] || die "identity '$name' already exists ($dir)"
   local gname gmail
   read -r -p "Git user name (for commits): " gname
@@ -140,7 +141,7 @@ identity_add() {
 identity_ls() {
   [[ $# -eq 0 ]] || die "usage: mirabelle identity ls"
   local d found=0 n
-  for d in "$MB_SETUP"/identities/*/; do
+  for d in "$MB_CONFIG"/identities/*/; do
     [[ -f "$d/gitconfig" ]] || continue
     n=$(basename "$d")
     printf '%-12s %s <%s>\n' "$n" "$(git config -f "$d/gitconfig" user.name)" "$(git config -f "$d/gitconfig" user.email)"
@@ -152,7 +153,7 @@ identity_ls() {
 identity_rm() {
   take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
   local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle identity rm [-f] <name>"
-  local dir="$MB_SETUP/identities/$name" sec="$MB_SECRETS/identities/$name"
+  local dir="$MB_CONFIG/identities/$name" sec="$MB_SECRETS/identities/$name"
   [[ -d "$dir" ]] || die "no identity '$name'"
   guard_in_use "identity '$name'" mirabelle.identity "$name"
   confirm "Delete identity '$name' ($dir and its tokens)?" || { say "nothing deleted"; return 0; }
@@ -197,7 +198,7 @@ host_add() {
   take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
   [[ $# -eq 2 ]] || die "usage: mirabelle host add [-f] <identity> <https-url>"
   local id=$1; parse_https_url "$2"
-  local dir="$MB_SETUP/identities/$id" sec="$MB_SECRETS/identities/$id"
+  local dir="$MB_CONFIG/identities/$id" sec="$MB_SECRETS/identities/$id"
   [[ -f "$dir/gitconfig" ]] || die "no identity '$id'"
   local replace=0
   if grep -q "^$H_URL " "$dir/hosts.txt" 2>/dev/null; then
@@ -266,12 +267,12 @@ host_add() {
 
 host_ls() {
   [[ $# -eq 1 ]] || die "usage: mirabelle host ls <identity>"
-  local f="$MB_SETUP/identities/$1/hosts.txt"
+  local f="$MB_CONFIG/identities/$1/hosts.txt"
   [[ -f "$f" ]] || die "no identity '$1'"
   local url host port addr where n=0
   while read -r url host port addr where _; do
     [[ -z "${url:-}" || "$url" == \#* ]] && continue
-    printf '%-40s %s %s%s\n' "$url" "$addr" "$where" "$([[ -f "$MB_SETUP/identities/$1/ca/$host.crt" ]] && echo ', own certificate')"
+    printf '%-40s %s %s%s\n' "$url" "$addr" "$where" "$([[ -f "$MB_CONFIG/identities/$1/ca/$host.crt" ]] && echo ', own certificate')"
     n=$((n + 1))
   done < "$f"
   (( n )) || say "no host for '$1' (add one: mirabelle host add $1 https://...)"
@@ -290,7 +291,7 @@ host_rm() {
   take_force "$@"; set -- "${MB_REST[@]+"${MB_REST[@]}"}"
   [[ $# -eq 2 ]] || die "usage: mirabelle host rm [-f] <identity> <https-url>"
   local id=$1; parse_https_url "$2"
-  local dir="$MB_SETUP/identities/$id" sec="$MB_SECRETS/identities/$id"
+  local dir="$MB_CONFIG/identities/$id" sec="$MB_SECRETS/identities/$id"
   grep -q "^$H_URL " "$dir/hosts.txt" 2>/dev/null || die "$H_URL is not a host of '$id'"
   guard_in_use "identity '$id'" mirabelle.identity "$id"
   confirm "Remove $H_URL from '$id' (its token and certificate too)?" || { say "nothing removed"; return 0; }
@@ -303,8 +304,8 @@ host_rm() {
 # --- sites ------------------------------------------------------------------
 
 sites_file() {   # sites_file <project or "">
-  if [[ -n "$1" ]]; then need_name project "$1"; printf '%s\n' "$MB_SETUP/projects/$1/sites.txt"
-  else printf '%s\n' "$MB_SETUP/sites.txt"
+  if [[ -n "$1" ]]; then need_name project "$1"; printf '%s\n' "$MB_CONFIG/projects/$1/sites.txt"
+  else printf '%s\n' "$MB_CONFIG/sites.txt"
   fi
 }
 
@@ -326,16 +327,17 @@ cmd_site() {
       if read_sites "$f" | grep -qx "$domain"; then say "$domain is already in $f"; return 0; fi
       (( MB_DRY )) && { say "would add $domain to $f"; return 0; }
       mkdir -p "$(dirname "$f")"
-      [[ -f "$f" ]] || say "# Sites for project ${project}, on top of setup/sites.txt. One domain per line." > "$f"
+      [[ -f "$f" ]] || say "# Sites for project ${project}, on top of config/sites.txt. One domain per line." > "$f"
       printf '%s\n' "$domain" >> "$f"
       line added "$domain to $f"
       next "a running container gets it after: mirabelle lock${project:+ -n $project}"
       ;;
     ls)
       [[ -z "$domain" ]] || die "usage: mirabelle site ls [-n <project>]"
-      say "setup/sites.txt:"; read_sites "$MB_SETUP/sites.txt" | sed 's/^/  /'
+      say "plumbing/sites.txt (what the plumbing needs; change it through mirabelle upgrade):"; read_sites "$MB_PLUMBING/sites.txt" | sed 's/^/  /'
+      say "config/sites.txt:"; read_sites "$MB_CONFIG/sites.txt" | sed 's/^/  /'
       if [[ -n "$project" ]]; then
-        say "setup/projects/$project/sites.txt:"
+        say "config/projects/$project/sites.txt:"
         if [[ -f "$f" ]]; then read_sites "$f" | sed 's/^/  /'; else say "  (none)"; fi
       fi
       ;;

@@ -1,0 +1,2 @@
+# Libraries: one name per line. Each is a git repo in ~/mirabelle/kb/libraries/<name>.
+# Written by mirabelle library add|rm; read by pull and install.sh.

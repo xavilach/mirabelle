@@ -1,12 +1,6 @@
-# Sites every project may reach, through the firewall's filter.
-#
-# One domain per line. A domain includes its subdomains:
-# "github.com" also allows "api.github.com".
-# Lines starting with # are comments.
-#
-# Edit with `mirabelle site add|rm <domain>`, or by hand.
-# A project can have more in setup/projects/<name>/sites.txt (`site add -n`).
-# After a change, `mirabelle lock` applies it to a running container.
+# Sites the plumbing itself needs, for every project: Claude and VS Code.
+# Your own sites go in ~/mirabelle/config/sites.txt (`mirabelle site add`).
+# One domain per line; a domain includes its subdomains.
 
 # Claude
 api.anthropic.com
@@ -14,18 +8,7 @@ claude.ai
 claude.com
 anthropic.com
 
-# GitHub (code and downloads)
-github.com
-githubusercontent.com
-githubassets.com
-
-# Packages
-pypi.org
-pythonhosted.org
-npmjs.org
-npmjs.com
-
-# VS Code server and extensions (to be confirmed on first use: see docs)
+# VS Code server and extensions (to be confirmed on first use: mirabelle logs)
 update.code.visualstudio.com
 vscode.download.prss.microsoft.com
 marketplace.visualstudio.com

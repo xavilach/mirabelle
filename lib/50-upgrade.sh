@@ -1,28 +1,70 @@
 # shellcheck shell=bash
 # Upgrading mirabelle: upgrade, status, apply, discard, rollback.
 #
-# proposed/ is a git clone of setup/ (its "origin" is ../setup). Claude edits
-# it in the upgrade container. The PC never runs anything from it. `apply`
-# brings its changes into setup/ after showing them and getting your yes.
-# Each apply and rollback is one commit in setup/ with a tag:
-#   apply-YYYYMMDD-HHMMSS / rollback-YYYYMMDD-HHMMSS
-# install.sh tags the version first installed: install-YYYYMMDD-HHMMSS
+# Two repos can be upgraded: the plumbing (the tool, from GitHub) and your
+# config. proposed/plumbing and proposed/config are git clones of them (their
+# "origin" is the real repo). Claude edits them in the upgrade container, at
+# /work/upgrade/plumbing and /work/upgrade/config. The PC never runs anything
+# from proposed/. `apply` brings the changes into the real repos after showing
+# them and getting your yes.
+#
+# One apply is one commit in each repo it changes, with the same tag in each:
+#   apply-YYYYMMDD-HHMMSS
+# A rollback is one commit in each repo it changes, tagged rollback-..., with
+# one line "Undoes: apply-..." per apply it undid.
 
-setup_branch() { git -C "$MB_SETUP" symbolic-ref --short HEAD; }
+UPG_REPOS=(plumbing config)
 
-setup_clean() { [[ -z "$(git -C "$MB_SETUP" status --porcelain)" ]]; }
-
-proposed_pending() {   # true if proposed differs from setup's current commit
-  [[ -d "$MB_PROPOSED/.git" ]] || return 1
-  [[ -n "$(git -C "$MB_PROPOSED" status --porcelain)" ]] && return 0
-  [[ "$(git -C "$MB_PROPOSED" rev-parse HEAD)" != "$(git -C "$MB_SETUP" rev-parse HEAD)" ]] &&
-    ! git -C "$MB_SETUP" merge-base --is-ancestor "$(git -C "$MB_PROPOSED" rev-parse HEAD)" HEAD 2>/dev/null
+repo_dir() {   # repo_dir plumbing|config
+  case "$1" in plumbing) printf '%s\n' "$MB_PLUMBING" ;; config) printf '%s\n' "$MB_CONFIG" ;; esac
 }
 
-proposed_reset() {   # make proposed an exact copy of setup's current commit
-  git_mb -C "$MB_PROPOSED" fetch -q origin
-  git_mb -C "$MB_PROPOSED" reset -q --hard "origin/$(setup_branch)"
-  git_mb -C "$MB_PROPOSED" clean -q -fd
+repo_clean() { [[ -z "$(git -C "$(repo_dir "$1")" status --porcelain)" ]]; }
+
+# True if proposed/<repo> differs from the repo's current commit.
+proposed_pending() {   # proposed_pending <repo>
+  local p="$MB_PROPOSED/$1" d; d=$(repo_dir "$1")
+  [[ -d "$p/.git" ]] || return 1
+  [[ -n "$(git -C "$p" status --porcelain)" ]] && return 0
+  [[ "$(git -C "$p" rev-parse HEAD)" != "$(git -C "$d" rev-parse HEAD)" ]] &&
+    ! git -C "$d" merge-base --is-ancestor "$(git -C "$p" rev-parse HEAD)" HEAD 2>/dev/null
+}
+
+# A tag name not used yet in plumbing or config: <prefix>-YYYYMMDD-HHMMSS,
+# with -2, -3... added if two happen in the same second.
+new_tag() {   # new_tag apply|rollback
+  local base t n=2 r used
+  base="$1-$(date +%Y%m%d-%H%M%S)"; t=$base
+  while :; do
+    used=0
+    for r in "${UPG_REPOS[@]}"; do git -C "$(repo_dir "$r")" rev-parse -q --verify "refs/tags/$t" >/dev/null && used=1; done
+    (( used )) || break
+    t="$base-$n"; n=$((n + 1))
+  done
+  printf '%s\n' "$t"
+}
+
+any_pending() { local r; for r in "${UPG_REPOS[@]}"; do proposed_pending "$r" && return 0; done; return 1; }
+
+proposed_reset() {   # make proposed/<repo> an exact copy of the repo's current commit
+  local p="$MB_PROPOSED/$1" d; d=$(repo_dir "$1")
+  git_mb -C "$p" fetch -q origin
+  git_mb -C "$p" reset -q --hard "origin/$(git -C "$d" symbolic-ref --short HEAD)"
+  git_mb -C "$p" clean -q -fd
+}
+
+proposed_prepare() {   # create, keep or refresh proposed/<repo>
+  local r=$1 p="$MB_PROPOSED/$1" d; d=$(repo_dir "$1")
+  if [[ ! -d "$p/.git" ]]; then
+    run mkdir -p "$MB_PROPOSED"
+    run git clone -q "$d" "$p"
+    line proposed "$r: created as a copy ($p)"
+  elif proposed_pending "$r"; then
+    line proposed "$r: kept, it has changes not applied yet (see: mirabelle status)"
+  else
+    proposed_reset "$r"
+    line proposed "$r: brought up to date"
+  fi
 }
 
 cmd_upgrade() {
@@ -48,23 +90,17 @@ cmd_upgrade() {
   image_exists mirabelle:latest || die "the image does not exist yet: run mirabelle build first"
   container_exists "$c" && { run docker rm -f "$c" >/dev/null; line removed "stopped container $c"; }
 
-  if [[ ! -d "$MB_PROPOSED/.git" ]]; then
-    run git clone -q "$MB_SETUP" "$MB_PROPOSED"
-    line proposed "created as a copy of setup ($MB_PROPOSED)"
-  elif proposed_pending; then
-    line proposed "kept: it has changes not applied yet (see: mirabelle status)"
-  else
-    proposed_reset
-    line proposed "brought up to date with setup"
-  fi
+  local r
+  for r in "${UPG_REPOS[@]}"; do proposed_prepare "$r"; done
 
   line project upgrade
   line account "$account"
   line image mirabelle:latest
-  line mounts "$MB_PROPOSED → /work/upgrade  rw  (mirabelle's full source)"
+  line mounts "$MB_PROPOSED/plumbing → /work/upgrade/plumbing  rw  (the tool, the image, the firewall)"
+  more "$MB_PROPOSED/config → /work/upgrade/config  rw  (your sites, identities, projects, libraries list)"
   more "$MB_AGENT → /kb/agent  rw"
   more "$MB_SESSIONS/upgrade → /session  rw"
-  more "no identity, no Docker access; the firewall is on"
+  more "no identity, no libraries, no Docker access; the firewall is on"
 
   prepare_dirs upgrade
   lock_write upgrade ""
@@ -79,36 +115,37 @@ cmd_upgrade() {
 }
 
 # Groups changed paths into the parts shown by status and apply.
-part_of() {
-  case "$1" in
-    bin/*|lib/*|install.sh|rescue.sh) echo tool ;;
-    image/*|projects/*/Dockerfile)    echo image ;;
-    lock/*)                           echo firewall ;;
-    sites.txt|projects/*/sites.txt|libraries.txt) echo lists ;;
-    identities/*)                     echo identities ;;
-    docs/*|README.md|agent-starter/*) echo documentation ;;
-    *)                                echo other ;;
+part_of() {   # part_of <repo> <path>
+  case "$1:$2" in
+    plumbing:bin/*|plumbing:lib/*|plumbing:install.sh|plumbing:rescue.sh) echo tool ;;
+    plumbing:image/*|config:projects/*/Dockerfile)                       echo image ;;
+    plumbing:lock/*)                                                      echo firewall ;;
+    *:sites.txt|config:projects/*/sites.txt|config:libraries.txt)         echo lists ;;
+    config:identities/*)                                                  echo identities ;;
+    plumbing:docs/*|plumbing:README.md|plumbing:*-starter/*)              echo documentation ;;
+    *)                                                                    echo other ;;
   esac
 }
 
 cmd_status() {
   [[ $# -eq 0 ]] || die "status takes no options"
   say "proposed (changes waiting for mirabelle apply):"
-  if [[ ! -d "$MB_PROPOSED/.git" ]]; then
-    say "  no proposed copy yet (it is created by: mirabelle upgrade)"
-  elif ! proposed_pending; then
-    say "  nothing pending"
-  else
-    local files base
-    query git -C "$MB_PROPOSED" fetch -q origin
-    base=$(git -C "$MB_PROPOSED" merge-base HEAD "origin/$(setup_branch)")
-    files=$( { git -C "$MB_PROPOSED" diff --name-only "$base"; \
-               git -C "$MB_PROPOSED" ls-files --others --exclude-standard; } | sort -u)
-    local f; while read -r f; do [[ -n "$f" ]] && printf '  %-14s %s\n' "$(part_of "$f")" "$f"; done <<<"$files"
+  local r p files base f shown=0
+  for r in "${UPG_REPOS[@]}"; do
+    p="$MB_PROPOSED/$r"
+    [[ -d "$p/.git" ]] || continue
+    proposed_pending "$r" || continue
+    query git -C "$p" fetch -q origin
+    base=$(git -C "$p" merge-base HEAD "origin/$(git -C "$(repo_dir "$r")" symbolic-ref --short HEAD)")
+    files=$( { git -C "$p" diff --name-only "$base"; git -C "$p" ls-files --others --exclude-standard; } | sort -u)
+    while read -r f; do [[ -n "$f" ]] && { printf '  %-14s %s/%s\n' "$(part_of "$r" "$f")" "$r" "$f"; shown=1; }; done <<<"$files"
+  done
+  if (( ! shown )); then
+    if [[ -d "$MB_PROPOSED" ]]; then say "  nothing pending"; else say "  no proposed copy yet (it is created by: mirabelle upgrade)"; fi
   fi
 
   say "not saved (mirabelle save):"
-  local r n any=0
+  local n any=0
   local -a repos; mapfile -t repos < <(all_repos)
   for r in "${repos[@]}"; do
     [[ -d "$MB_ROOT/$r/.git" ]] || continue
@@ -138,145 +175,195 @@ cmd_status() {
 
 cmd_apply() {
   [[ $# -eq 0 ]] || die "apply takes no options"
-  [[ -d "$MB_PROPOSED/.git" ]] || die "there is no proposed copy (it is created by: mirabelle upgrade)"
-  setup_clean || die "setup has unsaved changes; save them first: mirabelle save"
+  [[ -d "$MB_PROPOSED" ]] || die "there is no proposed copy (it is created by: mirabelle upgrade)"
+  local r d p
+  for r in "${UPG_REPOS[@]}"; do
+    repo_clean "$r" || die "$r has unsaved changes; save them first: mirabelle save"
+  done
 
-  if [[ -n "$(git -C "$MB_PROPOSED" status --porcelain)" ]]; then
-    git_mb -C "$MB_PROPOSED" add -A
-    git_mb -C "$MB_PROPOSED" commit -q -m "upgrade: changes not committed in the upgrade container"
-    line proposed "committed the changes Claude had not committed"
-  fi
+  for r in "${UPG_REPOS[@]}"; do
+    p="$MB_PROPOSED/$r"
+    [[ -d "$p/.git" && -n "$(git -C "$p" status --porcelain)" ]] || continue
+    git_mb -C "$p" add -A
+    git_mb -C "$p" commit -q -m "upgrade: changes not committed in the upgrade container"
+    line proposed "$r: committed the changes Claude had not committed"
+  done
   (( MB_DRY )) && { say "(dry run: would show the changes and ask)"; return 0; }
 
-  query git -C "$MB_SETUP" fetch -q "$MB_PROPOSED" HEAD
-  local base; base=$(git -C "$MB_SETUP" merge-base HEAD FETCH_HEAD)
-  if git -C "$MB_SETUP" diff --quiet "$base" FETCH_HEAD; then
-    say "nothing to apply: proposed has no change compared with setup"
+  # What changes, per repo (FETCH_HEAD of each repo = its proposed copy).
+  local -a changed=()
+  local -A base=()
+  for r in "${UPG_REPOS[@]}"; do
+    d=$(repo_dir "$r"); p="$MB_PROPOSED/$r"
+    [[ -d "$p/.git" ]] || continue
+    query git -C "$d" fetch -q "$p" HEAD
+    base[$r]=$(git -C "$d" merge-base HEAD FETCH_HEAD)
+    git -C "$d" diff --quiet "${base[$r]}" FETCH_HEAD || changed+=("$r")
+  done
+  if (( ${#changed[@]} == 0 )); then
+    say "nothing to apply: proposed has no change"
     return 0
   fi
 
   say "Changes proposed (from the upgrade project), by part:"
-  local f parts="" p
-  while read -r f; do
-    p=$(part_of "$f"); printf '  %-14s %s\n' "$p" "$f"
-    [[ " $parts " == *" $p "* ]] || parts+=" $p"
-  done < <(git -C "$MB_SETUP" diff --name-only "$base" FETCH_HEAD)
+  local f parts="" pt
+  for r in "${changed[@]}"; do
+    d=$(repo_dir "$r")
+    while read -r f; do
+      pt=$(part_of "$r" "$f"); printf '  %-14s %s/%s\n' "$pt" "$r" "$f"
+      [[ " $parts " == *" $pt "* ]] || parts+=" $pt"
+    done < <(git -C "$d" diff --name-only "${base[$r]}" FETCH_HEAD)
+  done
   say ""
-  say "Full changes:"
-  git -C "$MB_SETUP" --no-pager diff --stat "$base" FETCH_HEAD
-  git -C "$MB_SETUP" --no-pager diff "$base" FETCH_HEAD
-  say ""
-  confirm "Apply these changes to setup?" || { say "nothing applied (the changes stay in proposed)"; return 0; }
+  for r in "${changed[@]}"; do
+    d=$(repo_dir "$r")
+    say "Full changes in $r:"
+    git -C "$d" --no-pager diff --stat "${base[$r]}" FETCH_HEAD
+    git -C "$d" --no-pager diff "${base[$r]}" FETCH_HEAD
+    say ""
+  done
+  confirm "Apply these changes?" || { say "nothing applied (the changes stay in proposed)"; return 0; }
 
-  if ! git_mb -C "$MB_SETUP" merge -q --squash FETCH_HEAD >/dev/null 2>&1; then
-    local conflicts; conflicts=$(git -C "$MB_SETUP" diff --name-only --diff-filter=U | paste -sd' ')
-    git_mb -C "$MB_SETUP" reset -q --hard HEAD
-    die "the same lines changed in setup and in proposed: $conflicts. Nothing applied. (Run mirabelle upgrade and ask Claude to redo the change on the current setup.)"
-  fi
-  local tag; tag="apply-$(date +%Y%m%d-%H%M%S)"
-  git_mb -C "$MB_SETUP" commit -q -m "apply:${parts}" -m "From the upgrade project. Tag: $tag"
-  git_mb -C "$MB_SETUP" tag -a "$tag" -m "apply:${parts}"
-  line applied "setup is now at $(git -C "$MB_SETUP" rev-parse --short HEAD), tag $tag"
-  proposed_reset
-  line proposed "now the same as setup"
+  # Merge everything first; commit only if every repo merged cleanly.
+  for r in "${changed[@]}"; do
+    d=$(repo_dir "$r")
+    if ! git_mb -C "$d" merge -q --squash FETCH_HEAD >/dev/null 2>&1; then
+      local conflicts; conflicts=$(git -C "$d" diff --name-only --diff-filter=U | sed "s#^#$r/#" | paste -sd' ')
+      local x; for x in "${changed[@]}"; do git_mb -C "$(repo_dir "$x")" reset -q --hard HEAD; done
+      die "the same lines changed in $r and in its proposed copy: $conflicts. Nothing applied. (Run mirabelle upgrade and ask Claude to redo the change on the current version.)"
+    fi
+  done
+  local tag; tag=$(new_tag apply)
+  for r in "${changed[@]}"; do
+    d=$(repo_dir "$r")
+    git_mb -C "$d" commit -q -m "apply:${parts}" -m "From the upgrade project. Tag: $tag"
+    git_mb -C "$d" tag -a "$tag" -m "apply:${parts}"
+    line applied "$r is now at $(git -C "$d" rev-parse --short HEAD), tag $tag"
+  done
+  for r in "${UPG_REPOS[@]}"; do [[ -d "$MB_PROPOSED/$r/.git" ]] && proposed_reset "$r"; done
+  line proposed "now the same as plumbing and config"
 
   [[ " $parts " == *" image "* ]] && next "the image definition changed: mirabelle build (and mirabelle build -n <project> for project layers)"
   [[ " $parts " == *" firewall "* || " $parts " == *" lists "* || " $parts " == *" identities "* ]] && next "the firewall or a list changed: mirabelle lock, in each running project"
   [[ " $parts " == *" tool "* ]] && next "the tool changed: it takes effect from your next mirabelle command"
+  [[ " ${changed[*]} " == *" plumbing "* ]] && next "mirabelle push sends the plumbing to GitHub (and the config to your home)"
   return 0
 }
 
 cmd_discard() {
   [[ $# -eq 0 ]] || die "discard takes no options"
-  [[ -d "$MB_PROPOSED/.git" ]] || die "there is no proposed copy"
-  proposed_pending || { say "nothing to discard"; return 0; }
-  confirm "Throw away every change in proposed?" || { say "nothing discarded"; return 0; }
-  proposed_reset
-  line discarded "proposed is the same as setup again"
+  any_pending || { say "nothing to discard"; return 0; }
+  confirm "Throw away every change in proposed (plumbing and config)?" || { say "nothing discarded"; return 0; }
+  local r
+  for r in "${UPG_REPOS[@]}"; do [[ -d "$MB_PROPOSED/$r/.git" ]] && proposed_reset "$r"; done
+  line discarded "proposed is the same as plumbing and config again"
 }
 
-# Apply commits not undone yet, newest first. A rollback commit lists the
-# applies it undid as "Reverts: <commit>" lines.
-applies_not_undone() {   # applies_not_undone [<since tag>]
-  local range=HEAD
-  [[ -n "${1:-}" ]] && range="$1..HEAD"
+# --- rollback ----------------------------------------------------------------
+
+# Apply tags not undone yet, newest first. A rollback commit lists the applies
+# it undid as "Undoes: apply-..." lines.
+applies_not_undone() {
   local -A undone=()
-  local c
-  while read -r c; do [[ -n "$c" ]] && undone[$c]=1; done < <(
-    git -C "$MB_SETUP" log --format=%B "$range" | sed -n 's/^Reverts: \([0-9a-f]\{40\}\)$/\1/p')
-  while read -r c; do
-    [[ -n "$c" && -z "${undone[$c]:-}" ]] && printf '%s\n' "$c"
-  done < <(git -C "$MB_SETUP" log --format=%H --author=mirabelle --grep='^apply:' "$range")
+  local r t
+  while read -r t; do [[ -n "$t" ]] && undone[$t]=1; done < <(
+    for r in "${UPG_REPOS[@]}"; do git -C "$(repo_dir "$r")" log --format=%B 2>/dev/null; done |
+      sed -n 's/^Undoes: \(apply-[0-9-]*\)$/\1/p')
+  for r in "${UPG_REPOS[@]}"; do git -C "$(repo_dir "$r")" tag -l 'apply-*' 2>/dev/null; done |
+    sort -u -r | while read -r t; do [[ -z "${undone[$t]:-}" ]] && printf '%s\n' "$t"; done
+  return 0
 }
 
-# For a list file (one domain per line) changed both by an apply and later:
-# take the current lines, remove those the apply added, put back those it
-# removed. Exact for lists, whatever the order of the lines.
-undo_list_lines() {   # undo_list_lines <apply commit> <file>
-  local c=$1 f=$2 tmp
+# For a list file (one domain or name per line) changed both by an apply and
+# later: take the current lines, remove those the apply added, put back those
+# it removed. Exact for lists, whatever the order of the lines.
+undo_list_lines() {   # undo_list_lines <repo dir> <apply commit> <file>
+  local d=$1 c=$2 f=$3 tmp
   tmp=$(mktemp -d)
-  git -C "$MB_SETUP" show "$c^:$f" > "$tmp/before" 2>/dev/null || : > "$tmp/before"
-  git -C "$MB_SETUP" show "$c:$f"  > "$tmp/after"  2>/dev/null || : > "$tmp/after"
-  git -C "$MB_SETUP" show "HEAD:$f" > "$tmp/now"   2>/dev/null || : > "$tmp/now"
+  git -C "$d" show "$c^:$f" > "$tmp/before" 2>/dev/null || : > "$tmp/before"
+  git -C "$d" show "$c:$f"  > "$tmp/after"  2>/dev/null || : > "$tmp/after"
+  git -C "$d" show "HEAD:$f" > "$tmp/now"   2>/dev/null || : > "$tmp/now"
   awk 'FILENAME==ARGV[1]{b[$0]=1; next} FILENAME==ARGV[2]{a[$0]=1; next}
-       FILENAME==ARGV[3]{ if (($0 in a) && !($0 in b)) next; print; seen[$0]=1; next }
-       END{}' "$tmp/before" "$tmp/after" "$tmp/now" > "$tmp/result"
+       FILENAME==ARGV[3]{ if (($0 in a) && !($0 in b)) next; print }' "$tmp/before" "$tmp/after" "$tmp/now" > "$tmp/result"
   awk 'FILENAME==ARGV[1]{a[$0]=1; next} FILENAME==ARGV[2]{n[$0]=1; next}
        FILENAME==ARGV[3]{ if (!($0 in a) && !($0 in n)) print }' "$tmp/after" "$tmp/result" "$tmp/before" > "$tmp/restore"
-  cat "$tmp/result" "$tmp/restore" > "$MB_SETUP/$f"
+  cat "$tmp/result" "$tmp/restore" > "$d/$f"
   rm -rf "$tmp"
-  git_mb -C "$MB_SETUP" add "$f"
+  git_mb -C "$d" add "$f"
   line merged "$f: removed what that apply added, kept your later lines"
 }
 
+is_list_file() { [[ "$1" == sites.txt || "$1" == projects/*/sites.txt || "$1" == libraries.txt ]]; }
+
 cmd_rollback() {
   [[ $# -le 1 ]] || die "usage: mirabelle rollback [<tag>]"
-  setup_clean || die "setup has unsaved changes; save them first: mirabelle save"
-  local since=${1:-} c
-  local -a todo
+  local r d t
+  for r in "${UPG_REPOS[@]}"; do
+    repo_clean "$r" || die "$r has unsaved changes; save them first: mirabelle save"
+  done
+  local since=${1:-}
+  local -a all todo
+  mapfile -t all < <(applies_not_undone)
   if [[ -n "$since" ]]; then
-    git -C "$MB_SETUP" rev-parse -q --verify "refs/tags/$since" >/dev/null || die "no tag '$since' in setup"
-    mapfile -t todo < <(applies_not_undone "$since")
+    [[ "$since" == apply-* ]] || die "give an apply tag (see the list printed by: mirabelle rollback)"
+    for t in "${all[@]}"; do [[ "$t" > "$since" ]] && todo+=("$t"); done
   else
-    mapfile -t todo < <(applies_not_undone | head -1)
+    (( ${#all[@]} )) && todo=("${all[0]}")
   fi
   (( ${#todo[@]} )) || die "there is no apply to undo${since:+ after $since}"
 
-  say "Applies of setup (newest first):"
-  while read -r c; do
-    local mark=""
-    [[ " ${todo[*]} " == *" $c "* ]] && mark="   <- will be undone"
-    printf '  %s  %s  %s%s\n' "$(git -C "$MB_SETUP" describe --tags --exact-match "$c" 2>/dev/null || git -C "$MB_SETUP" rev-parse --short "$c")" \
-      "$(git -C "$MB_SETUP" log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M' "$c")" "$(git -C "$MB_SETUP" log -1 --format=%s "$c")" "$mark"
-  done < <(applies_not_undone | head -8)
+  say "Applies not undone yet (newest first):"
+  for t in "${all[@]:0:8}"; do
+    local where=""
+    for r in "${UPG_REPOS[@]}"; do git -C "$(repo_dir "$r")" rev-parse -q --verify "refs/tags/$t" >/dev/null && where+=" $r"; done
+    printf '  %s  %-30s in:%s%s\n' "$t" "$(for r in "${UPG_REPOS[@]}"; do git -C "$(repo_dir "$r")" tag -l --format='%(subject)' "$t"; done | head -1)" \
+      "$where" "$([[ " ${todo[*]} " == *" $t "* ]] && echo '   <- will be undone')"
+  done
   say "Changes this rollback makes:"
-  for c in "${todo[@]}"; do git -C "$MB_SETUP" --no-pager diff --stat "$c" "$c^"; done
+  for t in "${todo[@]}"; do
+    for r in "${UPG_REPOS[@]}"; do
+      d=$(repo_dir "$r")
+      git -C "$d" rev-parse -q --verify "refs/tags/$t" >/dev/null || continue
+      say "  $r ($t):"; git -C "$d" --no-pager diff --stat "$t" "$t^" | sed 's/^/  /'
+    done
+  done
   say "Changes you saved after those applies (identities, sites, ...) are kept."
   confirm "Undo ${#todo[@]} apply(s)?" || { say "nothing changed"; return 0; }
 
-  for c in "${todo[@]}"; do
-    git_mb -C "$MB_SETUP" revert --no-commit "$c" >/dev/null 2>&1 && continue
-    local f bad=""
-    while read -r f; do
-      [[ -n "$f" ]] || continue
-      if [[ "$f" == sites.txt || "$f" == projects/*/sites.txt ]]; then
-        undo_list_lines "$c" "$f"
-      else
-        bad+=" $f"
+  local -a touched=()
+  for r in "${UPG_REPOS[@]}"; do
+    d=$(repo_dir "$r")
+    local any=0
+    for t in "${todo[@]}"; do
+      git -C "$d" rev-parse -q --verify "refs/tags/$t" >/dev/null || continue
+      any=1
+      local c; c=$(git -C "$d" rev-parse "$t^{commit}")
+      git_mb -C "$d" revert --no-commit "$c" >/dev/null 2>&1 && continue
+      local f bad=""
+      while read -r f; do
+        [[ -n "$f" ]] || continue
+        if is_list_file "$f"; then undo_list_lines "$d" "$c" "$f"; else bad+=" $r/$f"; fi
+      done < <(git -C "$d" diff --name-only --diff-filter=U)
+      if [[ -n "$bad" ]]; then
+        local x; for x in "${UPG_REPOS[@]}"; do git_mb -C "$(repo_dir "$x")" reset -q --hard HEAD; done
+        die "cannot undo cleanly:$bad changed again since. Nothing changed."
       fi
-    done < <(git -C "$MB_SETUP" diff --name-only --diff-filter=U)
-    if [[ -n "$bad" ]]; then
-      git_mb -C "$MB_SETUP" reset -q --hard HEAD
-      die "cannot undo cleanly:$bad changed again since. Nothing changed."
-    fi
+    done
+    (( any )) && touched+=("$r")
   done
-  local tag; tag="rollback-$(date +%Y%m%d-%H%M%S)"
-  local -a msg=(-m "rollback: undo ${#todo[@]} apply(s)" -m "Tag: $tag")
-  local trailer=""; for c in "${todo[@]}"; do trailer+="Reverts: $c"$'\n'; done
-  msg+=(-m "${trailer%$'\n'}")
-  git_mb -C "$MB_SETUP" commit -q --allow-empty "${msg[@]}"
-  git_mb -C "$MB_SETUP" tag -a "$tag" -m "rollback: undo ${#todo[@]} apply(s)"
-  line undone "${#todo[@]} apply(s); setup is at $(git -C "$MB_SETUP" rev-parse --short HEAD), tag $tag (nothing erased from history)"
-  if [[ -d "$MB_PROPOSED/.git" ]] && ! proposed_pending; then proposed_reset; line proposed "now the same as setup"; fi
+
+  local tag; tag=$(new_tag rollback)
+  local trailer=""; for t in "${todo[@]}"; do trailer+="Undoes: $t"$'\n'; done
+  for r in "${touched[@]}"; do
+    d=$(repo_dir "$r")
+    git_mb -C "$d" commit -q --allow-empty -m "rollback: undo ${#todo[@]} apply(s)" -m "Tag: $tag" -m "${trailer%$'\n'}"
+    git_mb -C "$d" tag -a "$tag" -m "rollback: undo ${#todo[@]} apply(s)"
+    line undone "$r is at $(git -C "$d" rev-parse --short HEAD), tag $tag (nothing erased from history)"
+  done
+  for r in "${UPG_REPOS[@]}"; do
+    [[ -d "$MB_PROPOSED/$r/.git" ]] && ! proposed_pending "$r" && proposed_reset "$r"
+  done
   next "if the image definition changed: mirabelle run ... --previous (the image that worked), or mirabelle build"
+  [[ " ${touched[*]} " == *" plumbing "* ]] && next "mirabelle push sends the plumbing rollback to GitHub"
+  return 0
 }

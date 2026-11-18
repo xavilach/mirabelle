@@ -42,9 +42,9 @@ start_container() {
   lock_apply "$c"
 
   if (( MB_DRY )); then
-    printf 'would run: '; show_cmd docker exec -i -u dev "$c" bash -s; say "           < $MB_SETUP/lib/inside/start.sh"
+    printf 'would run: '; show_cmd docker exec -i -u dev "$c" bash -s; say "           < $MB_PLUMBING/lib/inside/start.sh"
   else
-    query docker exec -i -u dev "$c" bash -s < "$MB_SETUP/lib/inside/start.sh"
+    query docker exec -i -u dev "$c" bash -s < "$MB_PLUMBING/lib/inside/start.sh"
   fi
 }
 
@@ -86,7 +86,7 @@ cmd_run() {
     (( MB_DRY )) || line replaced "removed the existing container $c (-f)"
   fi
   [[ -f "$MB_SECRETS/accounts/$account" ]] || die "no account '$account' (see: mirabelle account ls)"
-  [[ -f "$MB_SETUP/identities/$identity/gitconfig" ]] || die "no identity '$identity' (see: mirabelle identity ls)"
+  [[ -f "$MB_CONFIG/identities/$identity/gitconfig" ]] || die "no identity '$identity' (see: mirabelle identity ls)"
 
   local repo=mirabelle
   image_exists "mirabelle-$project:latest" && repo="mirabelle-$project"
@@ -117,7 +117,7 @@ cmd_run() {
 
   local -a extra=(
     --mount "type=bind,src=$PWD,dst=/work/$project"
-    --mount "type=bind,src=$MB_SETUP/identities/$identity,dst=/identity,readonly"
+    --mount "type=bind,src=$MB_CONFIG/identities/$identity,dst=/identity,readonly"
     --mount "type=bind,src=$MB_SECRETS/identities/$identity,dst=/identity-secret,readonly"
     -e GIT_CONFIG_GLOBAL=/identity/gitconfig
     -e "MIRABELLE_LIBRARIES=${libraries[*]}"

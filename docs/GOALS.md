@@ -1,4 +1,4 @@
-# mirabelle — what I want (goals, v20)
+# mirabelle — what I want (goals, v21)
 
 This document says **what** I want, not how. The technical spec (`SPEC.md`) is written from it.
 
@@ -44,16 +44,17 @@ There are two things, and they must stay apart.
 - If Claude runs something with a web page, I can open it in my browser.
 - **Long runs keep going** when I close VS Code or the terminal. I can list what is running and reattach to see or steer it.
 
-### Three kinds of repo
-| Kind | What | Where it lives |
+### Three tiers, kept apart
+| Tier | What | Where it lives |
 |---|---|---|
-| Work code | Project repos for work | Their own remotes |
-| Personal code | Project repos of my own | Their own remotes |
-| **mirabelle** | The setup **and the kb** | Its own private home, separate from any project repo |
+| **Plumbing** | The mirabelle tool itself: commands, image, firewall, templates, docs | GitHub (`xavilach/mirabelle`) |
+| **My local data** | The plumbing's configuration (sites, identities, projects, the list of libraries), the agent, the libraries, the conversations | On this PC, in git repos I can push to **any git remote** (my "home") and clone on any computer |
+| **Project content** | My code, work or personal | Only in the project folder, and its own remotes |
 
-- **Plain git only.** mirabelle's sync is basic `push` and `pull`. No pull requests, no reviews, nothing that depends on GitHub, Gitea or any other hosting service.
-- mirabelle's home can therefore be **any plain git remote** (a bare repo on a disk, a NAS or a server). Which one is **not decided yet**, and it must be easy to change later.
-- mirabelle's sync and backup never touch project code, and project repos never contain mirabelle or the kb.
+- The plumbing contains nothing of mine; my local data contains none of the plumbing. Either can be replaced without touching the other.
+- **Plain git only.** Sync is basic `push` and `pull`. No pull requests, no reviews, nothing that depends on GitHub, Gitea or any other hosting service (GitHub is just where the plumbing happens to live).
+- My home can be **any plain git remote** (a bare repo on a disk, a NAS or a server). Which one is **not decided yet**, and it must be easy to change later.
+- mirabelle's sync and backup never touch project content, and project folders never contain mirabelle, my configuration or the kb.
 
 ### Safety (enforced by the setup, whatever the workflow says)
 - Claude **always** runs inside a container. It is **never installed and never runs in WSL or on Windows directly**: not the command-line tool, not the VS Code extension, not for logging in to an account, not for maintaining mirabelle.
@@ -115,10 +116,10 @@ The main idea: Claude always runs in a container, mirabelle is the plumbing that
   - updating Claude Code and unpinned tools is something I ask for explicitly;
   - after going back to an earlier mirabelle, I can still start from the image that worked, without rebuilding.
 - I can rebuild this PC quickly after a reinstall.
-- I can duplicate mirabelle and the kb on another computer, or mirror them.
+- I can duplicate mirabelle and my local data on another computer, or mirror them: clone the plumbing from GitHub, point it at my home.
 - I use one machine at a time, and moving between them is an **easy sync** (git-like).
-- mirabelle and the kb are backed up somewhere other than this PC, in a **private** place (transcripts may contain secrets).
-- **Project code stays put.** The sync and backup cover mirabelle and the kb only. Project code moves only through its own repos, when I publish.
+- My local data is backed up somewhere other than this PC, in a **private** place (transcripts may contain secrets). The plumbing is backed up on GitHub.
+- **Project code stays put.** The sync and backup cover the plumbing and my local data only. Project code moves only through its own repos, when I publish.
   - Accepted consequence: unpublished project work (private commits, uncommitted changes) exists only on this PC. It is not backed up and does not follow me to the other computer.
 - **Secrets are re-entered by hand** after a rebuild or on another computer. They are never in the backup or the sync.
 

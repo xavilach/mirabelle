@@ -1,13 +1,14 @@
 # shellcheck shell=bash
-# Save, push, pull, home: plain git on the repos (setup, kb/agent, sessions, libraries).
-#   setup               -> <home>/mirabelle.git
+# Save, push, pull, home: plain git on the repos.
+#   plumbing            -> its own origin (GitHub); never moved by `home`
+#   config              -> <home>/config.git
 #   kb/agent            -> <home>/agent.git
 #   sessions            -> <home>/sessions.git
 #   kb/libraries/<name> -> <home>/library-<name>.git   (see 45-library.sh)
 
 home_name() {   # repo folder -> name at the home
   case "$1" in
-    setup) echo mirabelle.git ;;
+    config) echo config.git ;;
     kb/agent) echo agent.git ;;
     kb/libraries/*) echo "library-${1#kb/libraries/}.git" ;;
     *) echo "$1.git" ;;
@@ -19,8 +20,9 @@ repo_branch() { git -C "$MB_ROOT/$1" symbolic-ref --short HEAD; }
 cmd_home() {
   [[ $# -le 1 ]] || die "usage: mirabelle home [<path-or-url>]"
   local r
-  local -a MB_REPOS; mapfile -t MB_REPOS < <(all_repos)
+  local -a MB_REPOS; mapfile -t MB_REPOS < <(all_repos | grep -vx plumbing)
   if [[ $# -eq 0 ]]; then
+    printf '%-10s %s  (the plumbing has its own origin)\n' plumbing "$(git -C "$MB_PLUMBING" remote get-url origin 2>/dev/null || echo '(none)')"
     for r in "${MB_REPOS[@]}"; do
       printf '%-10s %s\n' "$r" "$(git -C "$MB_ROOT/$r" remote get-url origin 2>/dev/null || echo '(no home set)')"
     done
@@ -103,16 +105,16 @@ cmd_push() {
 cmd_pull() {
   [[ $# -eq 0 ]] || die "pull takes no options"
   local r b before after fail=0
-  local -a MB_REPOS=(setup)
+  local -a MB_REPOS=(plumbing config)
   pull_repos || fail=1
-  # setup's libraries.txt may now name libraries this computer does not have.
+  # config/libraries.txt may now name libraries this computer does not have.
   local n
   while read -r n; do
     [[ -n "$n" && ! -d "$MB_LIBRARIES/$n" ]] || continue
     [[ -d "$MB_LIBRARIES" ]] || run mkdir -p "$MB_LIBRARIES"
-    library_clone "$n" || { printf '%-10s %s\n' "kb/libraries/$n" "listed in setup but not at the home"; fail=1; }
+    library_clone "$n" || { printf '%-10s %s\n' "kb/libraries/$n" "listed in config but not at the home"; fail=1; }
   done < <(library_names)
-  mapfile -t MB_REPOS < <(all_repos | grep -vx setup)
+  mapfile -t MB_REPOS < <(all_repos | grep -vx -e plumbing -e config)
   pull_repos || fail=1
   return $fail
 }

@@ -29,13 +29,16 @@ Everything goes through a filter at `127.0.0.1:3128` (already set in `HTTPS_PROX
 
 ## The upgrade project
 
-The user starts it with `mirabelle upgrade`. There, `/work/upgrade` is mirabelle's full source (a copy called "proposed"). You may change anything in it and commit. Nothing takes effect until the user runs `mirabelle apply` on the PC, which shows every change and asks.
+The user starts it with `mirabelle upgrade`. There, `/work/upgrade` holds copies (called "proposed") of the two repos that make up mirabelle's setup. You may change anything in them and commit. Nothing takes effect until the user runs `mirabelle apply` on the PC, which shows every change and asks.
 
-Inside `/work/upgrade`:
-- `image/Dockerfile` and `image/install-claude.sh`: the image (tools go here);
-- `sites.txt`: sites for all projects; `projects/<name>/sites.txt`: for one project;
-- `libraries.txt`: the list of libraries;
-- `projects/<name>/Dockerfile`: an extra image layer for one project (starts with `ARG BASE` and `FROM ${BASE}`);
-- `lock/`: the firewall; `bin/`, `lib/`: the tool; `docs/`: the design and reference.
+- `/work/upgrade/plumbing`: **the tool itself**, shared on GitHub. Changes here reach every user of this plumbing, so keep them general.
+  - `image/Dockerfile` and `image/install-claude.sh`: the image (tools go here);
+  - `sites.txt`: the sites the plumbing itself needs (Claude, VS Code);
+  - `lock/`: the firewall; `bin/`, `lib/`: the tool; `docs/`: the design and reference;
+  - `agent-starter/`, `config-starter/`: what a new install starts with.
+- `/work/upgrade/config`: **the user's own configuration**, pushed to their home, never to GitHub.
+  - `sites.txt`: the user's sites for all projects; `projects/<name>/sites.txt`: for one project;
+  - `projects/<name>/Dockerfile`: an extra image layer for one project (starts with `ARG BASE` and `FROM ${BASE}`);
+  - `libraries.txt`: the list of libraries; `identities/`: git identities (no tokens).
 
-Keep `docs/REFERENCE.md` true when you change behaviour. Keep tool versions pinned where they matter. After an image change, the user runs `mirabelle build`.
+Keep `plumbing/docs/REFERENCE.md` true when you change behaviour. Keep tool versions pinned where they matter. After an image change, the user runs `mirabelle build`.

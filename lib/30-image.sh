@@ -7,14 +7,14 @@
 # Build records: local/images/<name>.txt and <name>.previous.txt.
 
 # Writes the build record of an image to stdout.
-image_record() {   # image_record <image:tag> <context dir>
-  local image=$1 ctx=$2
+image_record() {   # image_record <image:tag> <context dir> <repo of the context>
+  local image=$1 ctx=$2 src=$3
   say "# Build record written by mirabelle build. Compare two with: diff <old> <new>"
   say "image:        $image"
   say "id:           $(docker image inspect -f '{{.Id}}' "$image")"
   say "built:        $(date '+%Y-%m-%d %H:%M:%S')"
   say "from:         $ctx"
-  say "setup:        $(git -C "$MB_SETUP" rev-parse --short HEAD 2>/dev/null || echo unknown)$(git -C "$MB_SETUP" diff --quiet HEAD -- "$ctx" 2>/dev/null || echo ' + uncommitted changes')"
+  say "version:      $(basename "$src") $(git -C "$src" rev-parse --short HEAD 2>/dev/null || echo unknown)$(git -C "$src" diff --quiet HEAD -- "$ctx" 2>/dev/null || echo ' + uncommitted changes')"
   say "claude:       $(docker run --rm --network none --entrypoint claude "$image" --version 2>/dev/null | head -1)"
   say "packages:"
   docker run --rm --network none --entrypoint dpkg-query "$image" -W -f '  ${Package} ${Version}\n'
@@ -31,16 +31,16 @@ cmd_build() {
   done
   need_docker; need_not_root
 
-  local repo ctx
+  local repo ctx src
   local -a a=(docker build)
   if [[ -n "$project" ]]; then
     need_name project "$project"
-    repo="mirabelle-$project"; ctx="$MB_SETUP/projects/$project"
+    repo="mirabelle-$project"; ctx="$MB_CONFIG/projects/$project"; src=$MB_CONFIG
     [[ -f "$ctx/Dockerfile" ]] || die "no $ctx/Dockerfile (a project layer starts with: ARG BASE / FROM \${BASE})"
     image_exists mirabelle:latest || die "the base image does not exist yet: run mirabelle build first"
     a+=(--build-arg BASE=mirabelle:latest --label "mirabelle.base=$(docker image inspect -f '{{.Id}}' mirabelle:latest)")
   else
-    repo=mirabelle; ctx="$MB_SETUP/image"
+    repo=mirabelle; ctx="$MB_PLUMBING/image"; src=$MB_PLUMBING
   fi
   # Labels change only when the definition changes, so a rebuild of an
   # unchanged definition gives the same image (and "previous" is kept).
@@ -48,12 +48,12 @@ cmd_build() {
   # build time into the image (and into a provenance record attached to it),
   # making every build a different image. The time used is that of the last
   # commit that changed the definition.
-  local epoch; epoch=$(git -C "$MB_SETUP" log -1 --format=%ct -- "$ctx" 2>/dev/null || true)
+  local epoch; epoch=$(git -C "$src" log -1 --format=%ct -- "$ctx" 2>/dev/null || true)
   a+=(--build-arg "USER_UID=$(id -u)" --build-arg "USER_GID=$(id -g)"
       --build-arg "SOURCE_DATE_EPOCH=${epoch:-0}"
       --provenance=false
       --label "mirabelle.kind=image"
-      --label "mirabelle.source=$(git -C "$MB_SETUP" log -1 --format=%H -- "$ctx" 2>/dev/null || echo unknown)")
+      --label "mirabelle.source=$(git -C "$src" log -1 --format=%H -- "$ctx" 2>/dev/null || echo unknown)")
   (( fresh )) && a+=(--no-cache --pull)
   a+=(-t "$repo:latest" "$ctx")
 
@@ -85,7 +85,7 @@ cmd_build() {
     run docker rmi "$repo:before-build" >/dev/null
     line same "nothing changed: $repo:latest is the same image as before"
   fi
-  image_record "$repo:latest" "$ctx" > "$rec"
+  image_record "$repo:latest" "$ctx" "$src" > "$rec"
 
   line built "$repo:latest  $(docker image inspect -f '{{.Size}}' "$repo:latest" | awk '{printf "%.0f MB", $1/1e6}')"
   line claude "$(sed -n 's/^claude: *//p' "$rec")"
@@ -99,7 +99,7 @@ cmd_build() {
     oc=$(sed -n 's/^claude: *//p' "$prev"); nc=$(sed -n 's/^claude: *//p' "$rec")
     [[ "$oc" != "$nc" ]] && line claude "was $oc"
   fi
-  [[ -z "$project" ]] && ls "$MB_SETUP/projects"/*/Dockerfile >/dev/null 2>&1 &&
+  [[ -z "$project" ]] && ls "$MB_CONFIG/projects"/*/Dockerfile >/dev/null 2>&1 &&
     next "project layers are built on the base: rebuild them with mirabelle build -n <project>"
   next "running containers keep their old image until: mirabelle stop, then mirabelle run ..."
 }
@@ -122,10 +122,10 @@ cmd_images() {
     if [[ "$tag" == latest ]]; then
       src=$(docker image inspect -f '{{index .Config.Labels "mirabelle.source"}}' "$ref")
       if [[ "$repo" == mirabelle ]]; then
-        cur=$(git -C "$MB_SETUP" log -1 --format=%H -- image 2>/dev/null)
-        { [[ "$src" != "$cur" ]] || ! git -C "$MB_SETUP" diff --quiet HEAD -- image; } && outdated="definition changed"
+        cur=$(git -C "$MB_PLUMBING" log -1 --format=%H -- image 2>/dev/null)
+        { [[ "$src" != "$cur" ]] || ! git -C "$MB_PLUMBING" diff --quiet HEAD -- image; } && outdated="definition changed"
       else
-        cur=$(git -C "$MB_SETUP" log -1 --format=%H -- "projects/${repo#mirabelle-}" 2>/dev/null)
+        cur=$(git -C "$MB_CONFIG" log -1 --format=%H -- "projects/${repo#mirabelle-}" 2>/dev/null)
         [[ "$src" != "$cur" ]] && outdated="definition changed"
         base=$(docker image inspect -f '{{index .Config.Labels "mirabelle.base"}}' "$ref")
         image_exists mirabelle:latest && [[ "$base" != "$(docker image inspect -f '{{.Id}}' mirabelle:latest)" ]] &&
