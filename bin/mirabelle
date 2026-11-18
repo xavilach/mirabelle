@@ -1,0 +1,19 @@
+#!/bin/bash
+# mirabelle: run Claude in a container, per project folder, behind a firewall.
+#
+# This file only finds its folders and loads lib/. Every command is in lib/.
+# Layout: ~/mirabelle/setup/bin/mirabelle  ->  setup = ~/mirabelle/setup,
+#                                              root  = ~/mirabelle
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+MB_SETUP=$(dirname "$(dirname "$self")")
+MB_ROOT=$(dirname "$MB_SETUP")
+
+for f in "$MB_SETUP"/lib/*.sh; do
+  # shellcheck source=/dev/null
+  source "$f"
+done
+
+main "$@"
+exit $?
