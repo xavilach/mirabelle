@@ -27,7 +27,7 @@ Accounts, identities, sites
   identity add|ls|rm <name>                    git identities
   host add|ls|rm <identity> [<https-url>]      git hosts of an identity
   site add|ls|rm <domain> [-n <project>]       sites the firewall allows
-  library add|ls|rm <name>                     libraries, picked per run with -l
+  library add|ls|rm [-f] <name>                libraries, picked per run with -l
 
 Upgrading mirabelle
   upgrade -a <account>   start the upgrade container and open Claude in it

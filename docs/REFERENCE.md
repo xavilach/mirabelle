@@ -188,11 +188,12 @@ Adds a library.
 #### `mirabelle library ls`
 Lists the libraries: listed in setup and present, listed but not on this computer, or present but not listed; number of files; unsaved changes. **Reads:** `setup/libraries.txt`, `kb/libraries/`. **Writes:** nothing.
 
-#### `mirabelle library rm <name>`
+#### `mirabelle library rm [-f] <name>`
 Removes a library from this computer and from `setup/libraries.txt`, after your yes. Its copy at the home is kept.
 
 - **Writes:** deletes `kb/libraries/<name>/`; one line of `setup/libraries.txt`.
-- **Refuses when:** the library has unsaved changes, commits not pushed, or was never pushed (this computer would hold its only copy).
+- **Refuses when** removing it would lose work: unsaved changes, commits not pushed, never pushed, or no home (this computer holds its only copy). It lists what would be lost.
+- **`-f` / `--force`:** removes it anyway. It still lists what will be lost and asks for your yes.
 
 ### 3.3 Working in a folder
 

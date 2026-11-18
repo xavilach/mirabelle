@@ -160,7 +160,7 @@ Both are printed by `mirabelle run`. Everything else in the agent is free.
 - **Picked per run:** `mirabelle run … -l stm32 -l client-x`. Only those are mounted, read-write, at `/kb/libraries/<name>`; their names are in `MIRABELLE_LIBRARIES`. A project never sees a library it was not started with, so one client's material does not reach another client's project.
 - **The list** is `setup/libraries.txt`, so another computer knows which libraries exist: `install.sh` and `mirabelle pull` clone the missing ones from the home.
 - On a folder home, `library add` also creates the library's empty repo at the home. On a server home, you create `library-<name>` there.
-- `mirabelle library rm` removes a library from this computer and from the list, only if everything in it is pushed. Its copy at the home is kept.
+- `mirabelle library rm` removes a library from this computer and from the list, only if everything in it is pushed; `-f` removes it anyway, after listing what will be lost and asking. Its copy at the home is kept.
 
 ### For both the agent and the libraries
 - **Ordinary git repos.** Their `.git` is inside, so Claude can commit, read the history and undo a change.
@@ -261,7 +261,7 @@ Every command accepts `-v` and `--dry-run`. Commands that act on a container use
 | `mirabelle identity add \| ls \| rm <name>` | Adds, lists or removes a git identity |
 | `mirabelle host add \| ls \| rm <identity> <https-url>` | Adds, lists or removes a git host for an identity |
 | `mirabelle site add \| ls \| rm <domain> [-n <project>]` | Edits a list of allowed sites |
-| `mirabelle library add \| ls \| rm <name>` | Adds, lists or removes a library |
+| `mirabelle library add \| ls \| rm [-f] <name>` | Adds, lists or removes a library (`-f`: remove even with work not pushed) |
 | `mirabelle run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]` | Starts this folder's container, with its firewall |
 | `mirabelle lock` | Re-applies the firewall to the running container |
 | `mirabelle code` | Opens VS Code attached to the running container |

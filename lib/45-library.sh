@@ -65,7 +65,7 @@ cmd_library() {
     add) library_add "$@" ;;
     ls)  library_ls "$@" ;;
     rm)  library_rm "$@" ;;
-    *)   die "usage: mirabelle library add|ls|rm <name>" ;;
+    *)   die "usage: mirabelle library add|ls|rm [-f] <name>" ;;
   esac
 }
 
@@ -130,18 +130,39 @@ library_ls() {
 }
 
 library_rm() {
-  local name=${1:-}; [[ -n "$name" && $# -eq 1 ]] || die "usage: mirabelle library rm <name>"
+  local name="" force=0
+  while (( $# )); do
+    case "$1" in
+      -f|--force) force=1; shift ;;
+      -*) die "library rm: unknown option '$1' (usage: mirabelle library rm [-f] <name>)" ;;
+      *)  [[ -z "$name" ]] || die "usage: mirabelle library rm [-f] <name>"; name=$1; shift ;;
+    esac
+  done
+  [[ -n "$name" ]] || die "usage: mirabelle library rm [-f] <name>"
   local dir="$MB_LIBRARIES/$name"
   library_names | grep -qx "$name" || [[ -d "$dir" ]] || die "no library '$name'"
+
+  # What removing it would lose. Without -f, any of these refuses.
+  local -a lost=()
   if [[ -d "$dir/.git" ]]; then
-    [[ -z "$(git -C "$dir" status --porcelain)" ]] || die "library '$name' has unsaved changes (mirabelle save, then push)"
+    local n
+    n=$(git -C "$dir" status --porcelain | wc -l)
+    (( n )) && lost+=("$n unsaved change(s) (mirabelle save, then push)")
     if git -C "$dir" rev-parse -q --verify '@{upstream}' >/dev/null 2>&1; then
-      [[ "$(git -C "$dir" rev-list --count '@{upstream}..HEAD')" == 0 ]] || die "library '$name' has commits not pushed (mirabelle push)"
+      n=$(git -C "$dir" rev-list --count '@{upstream}..HEAD')
+      (( n )) && lost+=("$n commit(s) not pushed (mirabelle push)")
     elif git -C "$dir" remote get-url origin >/dev/null 2>&1; then
-      die "library '$name' was never pushed (mirabelle push), so this is its only copy"
+      lost+=("everything: it was never pushed (mirabelle push), so this is its only copy")
     else
-      warn "library '$name' has no home: this computer has its only copy"
+      lost+=("everything: it has no home, so this computer has its only copy")
     fi
+  fi
+  if (( ${#lost[@]} )); then
+    if (( ! force )); then
+      say "library '$name' would lose:"; printf '  %s\n' "${lost[@]}"
+      die "not removed (to remove it anyway and lose that: mirabelle library rm -f $name)"
+    fi
+    say "-f: removing library '$name' LOSES:"; printf '  %s\n' "${lost[@]}"
   fi
   confirm "Remove library '$name' from this computer and from the list? (its copy at the home is kept)" || { say "nothing removed"; return 0; }
   [[ -d "$dir" ]] && run rm -rf "$dir"
