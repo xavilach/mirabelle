@@ -1,4 +1,4 @@
-# mirabelle — what I want (goals, v19)
+# mirabelle — what I want (goals, v20)
 
 This document says **what** I want, not how. The technical spec (`SPEC.md`) is written from it.
 
@@ -62,8 +62,8 @@ There are two things, and they must stay apart.
 - **The firewall is always on.** Only listed sites are reachable (GitHub, Claude, package sources, plus sites I add). There is no mode without it and no bypass.
 - **Secrets: least access.** Claude only gets the secrets that project needs, and can only reach the places that project is allowed to reach.
 - Malicious text in a repo, a package or a web page cannot cause harm to my PC, my network or other projects' files.
-- **The kb is the one shared thing.** A tricked Claude in one project could write bad instructions into it. This is accepted: every change is versioned, so I can trace and undo it.
-- **Normal projects never have any privileges.** They cannot change mirabelle, the firewall, or anything outside their own folder and the kb.
+- **The agent is the one thing shared by every project** (a library is shared only by the projects I pick it for). A tricked Claude in one project could write bad instructions into them. This is accepted: every change is versioned, so I can trace and undo it.
+- **Normal projects never have any privileges.** They cannot change mirabelle, the firewall, or anything outside their own folder, the agent and the libraries picked for them.
 - Inside that boundary, Claude works without asking permission for every step.
 
 ### Accounts and identities
@@ -74,21 +74,24 @@ There are two things, and they must stay apart.
 - Several git identities and credentials (GitHub, Gitea over HTTPS), chosen per project.
 
 ### The kb, as the setup sees it
-The setup treats the kb as **content it does not interpret**. It guarantees that:
-- the kb is **present in every project**, in the same place, readable and writable by Claude;
-- there is **one kb** for everything;
-- every change to it is **kept and versioned**, so anything can be traced and undone;
-- Claude's conversations (transcripts) are **kept forever** alongside it;
-- it can hold anything the workflow wants to put there (notes, rules, scripts, tests, tools);
-- **there is one kb, not one per project.** Shared and per-project knowledge are folders inside it, organized by the workflow. The whole kb is visible in every project; there is no selection per project;
-- the only thing mirabelle tells the workflow is the **project name**.
+**The kb is the agent plus the libraries.**
+- **The agent** is shared: the workflow, Claude's configuration and the shared knowledge. There is **one**, and it is **present in every project**, in the same place.
+- **Libraries** are extra knowledge that only some projects need: reference docs, topic knowledge, reusable code, material for one client or employer, and whatever else turns out to be useful. I **pick them per project**, each time I start it. A project never sees a library I did not pick, so one client's material never reaches another client's project.
+
+The setup treats both as **content it does not interpret**. It guarantees that:
+- the agent and the picked libraries are readable and writable by Claude;
+- every change to them is **kept and versioned**, so anything can be traced and undone;
+- Claude's conversations (transcripts) are **kept forever** alongside them;
+- they can hold anything the workflow wants to put there (notes, rules, scripts, tests, tools);
+- I can create and remove libraries; they follow me to another computer and into the backup, like the agent;
+- the only things mirabelle tells the workflow are the **project name** and the **names of the libraries picked**.
 
 ### mirabelle is maintained by Claude
 The main idea: Claude always runs in a container, mirabelle is the plumbing that makes that easy, and **Claude is the one who maintains and updates mirabelle**.
 
 - **mirabelle can be modified from inside a container that mirabelle made.** Claude never needs to run on my PC to work on it.
 - **One predefined "upgrade" project** is the only place where mirabelle can be changed. **A single command** runs Claude in a container with all the access needed to upgrade mirabelle.
-- **Claude knows how mirabelle works.** The kb holds a "mirabelle" knowledge section: what the setup is, how it is built, how to change it.
+- **Claude knows how mirabelle works.** The agent holds a "mirabelle" knowledge section: what the setup is, how it is built, how to change it.
 - **When something is needed, Claude changes mirabelle in the upgrade project and I apply it.** Example: a tool is missing, I start the upgrade, Claude adds it to the image, and I apply and rebuild.
 - **The first install is manual but easy:** clone a repo, run a script. It does not need Claude.
 - **One install, then nothing more on my PC.** Once mirabelle is installed, no further installs are needed on the PC. Any tool Claude needs is added to the image, never to the PC.
@@ -137,7 +140,7 @@ The workflow is **free**. It lives in the kb, starts simple, and evolves with me
 These are **current preferences, not requirements**. They are the starting content of the workflow and may all change. mirabelle must not depend on any of them.
 
 - One main agent, using subagents when needed.
-- Knowledge per project or per topic, kept outside the project repos: what was done, decisions and why, open items.
+- Knowledge per project or per topic, kept outside the project repos: what was done, decisions and why, open items. Shared knowledge in the agent; knowledge for some projects only in libraries.
 - Claude records knowledge automatically as it works, and when I say "remember this".
 - Lessons from one project help in the others.
 - Pairing in VS Code, and long unattended runs.

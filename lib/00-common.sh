@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Shared helpers: output, running commands, checks, names, paths.
 
-MB_KB="$MB_ROOT/kb"
+MB_AGENT="$MB_ROOT/kb/agent"        # the shared part of the kb
+MB_LIBRARIES="$MB_ROOT/kb/libraries" # the libraries, picked per run
 MB_SESSIONS="$MB_ROOT/sessions"
 MB_SECRETS="$MB_ROOT/secrets"
 MB_LOCAL="$MB_ROOT/local"

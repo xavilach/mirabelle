@@ -7,8 +7,9 @@
 # It prints every step. It installs nothing system-wide and edits none of your
 # shell files. What it creates, all under ~/mirabelle/ (the folder holding
 # setup/), plus one link:
-#   kb/         the shared kb (cloned from the home if it is there, else new)
-#   sessions/   Claude's conversations per project (cloned or new)
+#   kb/agent/        the shared part of the kb (cloned from the home if it is there, else new)
+#   kb/libraries/    the libraries listed in setup/libraries.txt (cloned or new)
+#   sessions/        Claude's conversations per project (cloned or new)
 #   secrets/    tokens, readable only by you
 #   local/      files for this PC only
 #   rescue.sh   standalone rollback (a copy of setup/rescue.sh)
@@ -53,9 +54,9 @@ if [[ "$origin" == */mirabelle.git ]]; then home=${origin%/mirabelle.git}; step 
 else step home "none yet (set it later: mirabelle home <path-or-url>)"
 fi
 
-make_repo() {   # make_repo <folder> <initial content dir or "">
-  local dir="$ROOT/$1" from=$2 url=""
-  [[ -n "$home" ]] && url="$home/$1.git"
+make_repo() {   # make_repo <folder> <name at the home> <initial content dir or "">
+  local dir="$ROOT/$1" from=$3 url=""
+  [[ -n "$home" ]] && url="$home/$2"
   if [[ -e "$dir" ]]; then step "$1" "already there, left as is ($dir)"; return; fi
   if [[ -n "$url" ]] && git ls-remote "$url" >/dev/null 2>&1 && [[ -n "$(git ls-remote "$url")" ]]; then
     git clone -q "$url" "$dir"
@@ -70,7 +71,8 @@ make_repo() {   # make_repo <folder> <initial content dir or "">
   step "$1" "created ($dir)${url:+, home $url}"
 }
 
-make_repo kb "$SETUP/kb-starter"
+mkdir -p "$ROOT/kb"
+make_repo kb/agent agent.git "$SETUP/agent-starter"
 
 tmp_sessions=$(mktemp -d)
 cat > "$tmp_sessions/README.md" <<'EOF'
@@ -80,8 +82,20 @@ Claude's conversations and state, one folder per project name. Each folder is
 Claude's configuration folder inside that project's container (/session).
 Written by Claude; committed by `mirabelle save`.
 EOF
-make_repo sessions "$tmp_sessions"
+make_repo sessions sessions.git "$tmp_sessions"
 rm -rf "$tmp_sessions"
+
+# Libraries listed in setup/libraries.txt (none on a first install).
+if [[ -f "$SETUP/libraries.txt" ]]; then
+  mkdir -p "$ROOT/kb/libraries"
+  while read -r lib; do
+    [[ -n "$lib" ]] || continue
+    tmp_lib=$(mktemp -d)
+    printf '# Library: %s\n\nWhat this library holds, and where.\n' "$lib" > "$tmp_lib/INDEX.md"
+    make_repo "kb/libraries/$lib" "library-$lib.git" "$tmp_lib"
+    rm -rf "$tmp_lib"
+  done < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$SETUP/libraries.txt" | grep -v '^$' || true)
+fi
 
 # --- mark the installed version, so that the first apply can be rolled back -----
 if [[ -z "$(git -C "$SETUP" tag -l 'install-*' 'apply-*' 'rollback-*')" ]]; then

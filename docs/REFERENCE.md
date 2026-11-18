@@ -8,13 +8,14 @@ Summary, glossary, every command with what it does and which files it reads and 
 
 ## 1. Summary
 
-**mirabelle** is a small command-line tool for WSL. It starts one container per project folder, in which Claude works autonomously behind a firewall, with one shared kb.
+**mirabelle** is a small command-line tool for WSL. It starts one container per project folder, in which Claude works autonomously behind a firewall, with a kb made of the agent (shared) and libraries (picked per project).
 
 - **How you use it:** `cd` into any folder, `mirabelle run -a <account> -i <identity>`, then `mirabelle code` or `mirabelle claude`. Nothing is written in the folder.
 - **Two halves:** the *setup* (mirabelle: containers, accounts, identities, firewall, git plumbing) and the *workflow* (the kb: how you and Claude work, and what you know). mirabelle does not interpret the kb.
-- **Safety:** Claude runs only in containers, as an ordinary user. A container sees its folder, the kb, its own conversations, one account token and one git identity. The firewall is always on and allows only listed sites.
+- **The kb** is the *agent* (one, shared, in every container) plus *libraries* (picked per run with `-l`, invisible to other projects).
+- **Safety:** Claude runs only in containers, as an ordinary user. A container sees its folder, the agent, the libraries picked for it, its own conversations, one account token and one git identity. The firewall is always on and allows only listed sites.
 - **Upgrading mirabelle:** only from the predefined upgrade project (`mirabelle upgrade`). Claude edits a proposed copy; nothing changes until `mirabelle apply` shows it and you say yes.
-- **Three git repos** (setup, kb, sessions), saved, pushed and pulled with plain git to a home you choose.
+- **Git repos** (setup, kb/agent, sessions, one per library), saved, pushed and pulled with plain git to a home you choose.
 - **Two rules:** nothing hidden; one command does one thing.
 - **On the PC:** Docker, git, VS Code and mirabelle.
 
@@ -34,11 +35,14 @@ Summary, glossary, every command with what it does and which files it reads and 
 | **Project name** | The folder's name, or the name given with `-n`. It decides the container name (`mirabelle-<name>`) and where the conversations are kept |
 | **Setup** | Repo 1, `~/mirabelle/setup`: the mirabelle tool, the image definition, the firewall, the lists. The PC runs mirabelle from here |
 | **Proposed** | `~/mirabelle/proposed`: a copy of setup that Claude can edit in the upgrade project. The PC never runs anything from it |
-| **kb** | Repo 2, `~/mirabelle/kb`: free content, present in every container at `/kb`. Holds the workflow, the knowledge and Claude's configuration. There is one, shared by all projects |
-| **Workflow** | How you and Claude work. It lives in the kb and is not part of mirabelle |
+| **kb** | The knowledge base: the agent plus the libraries, under `~/mirabelle/kb/` |
+| **Agent** | Repo `~/mirabelle/kb/agent`: the shared part of the kb, present in every container at `/kb/agent`. Holds the workflow, the shared knowledge and Claude's configuration |
+| **Library** | Repo `~/mirabelle/kb/libraries/<name>`: knowledge only some projects need (reference docs, topic notes, reusable code, client material). Mounted at `/kb/libraries/<name>` only when picked with `run -l <name>` |
+| **`MIRABELLE_LIBRARIES`** | A variable inside the container holding the names of the libraries picked for it |
+| **Workflow** | How you and Claude work. It lives in the agent and is not part of mirabelle |
 | **`MIRABELLE_PROJECT`** | A variable inside the container holding the project name. The workflow uses it to find that project's knowledge |
 | **Sessions** | Repo 3, `~/mirabelle/sessions`: one folder per project name with Claude's conversations and state |
-| **Home** | The place the three repos are pushed to and pulled from: a folder, a NAS or any git server |
+| **Home** | The place the repos (setup, kb/agent, sessions, libraries) are pushed to and pulled from: a folder, a NAS or any git server |
 | **Account** | A Claude account, used for usage limits. Stored as one token |
 | **Token** | A secret string that proves who you are: one per Claude account, one per git host |
 | **Identity** | A git identity: name, email, the git hosts it may use and their tokens |
@@ -76,15 +80,15 @@ Notes that apply to all of them:
 Sets up the PC, once.
 
 1. Checks that `git` and Docker are present and usable. If not, prints the official install steps and stops; it installs nothing system-wide.
-2. For the kb and for sessions: if setup was cloned from a home that also holds `kb.git` / `sessions.git`, clones them. Otherwise creates new repos, the kb with the starter content (`setup/kb-starter/`).
+2. For the agent, sessions and every library in `setup/libraries.txt`: if setup was cloned from a home that also holds `agent.git` / `sessions.git` / `library-<name>.git`, clones them. Otherwise creates new repos, the agent with the starter content (`setup/agent-starter/`), a library with an `INDEX.md`.
 3. Tags the installed version of setup `install-<date>`, so the first apply can be undone.
 4. Creates `secrets/` (private to you), `local/`, and copies `setup/rescue.sh` to `rescue.sh`.
 5. Links `~/.local/bin/mirabelle` to `setup/bin/mirabelle`. If that folder is not on your PATH, prints the line to add; it does not edit your shell files.
 6. Prints what is left for you to do.
 
 - **Reads:** `setup/`, the address setup was cloned from.
-- **Writes:** `kb/`, `sessions/`, `secrets/`, `local/`, `rescue.sh`, `~/.local/bin/mirabelle`, one tag in `setup/`.
-- **Refuses when:** `~/mirabelle/kb` or `sessions` already exist (it leaves them as they are and says so).
+- **Writes:** `kb/agent/`, `kb/libraries/`, `sessions/`, `secrets/`, `local/`, `rescue.sh`, `~/.local/bin/mirabelle`, one tag in `setup/`.
+- **Leaves as they are** (and says so): `kb/agent`, `sessions` or a library that already exists.
 
 #### `mirabelle build [--fresh] [-n <project>]`
 Builds the image.
@@ -171,34 +175,54 @@ Prints the list for all projects, and the project's own list with `-n`. **Reads:
 #### `mirabelle site rm <domain> [-n <project>]`
 Removes a site from a list. **Writes:** that list file.
 
+#### `mirabelle library add <name>`
+Adds a library.
+
+1. If the home has `library-<name>.git`, clones it into `kb/libraries/<name>/`.
+2. Otherwise creates a new git repo there with an `INDEX.md`, and sets its home to `<home>/library-<name>.git`. On a folder home, also creates that empty repo at the home; on a server home, tells you to create it.
+3. Adds the name to `setup/libraries.txt` (record it with `mirabelle save`).
+
+- **Writes:** `kb/libraries/<name>/`, `setup/libraries.txt`, possibly `<home>/library-<name>.git`.
+- **Refuses when:** the name is not valid, or the library already exists on this computer.
+
+#### `mirabelle library ls`
+Lists the libraries: listed in setup and present, listed but not on this computer, or present but not listed; number of files; unsaved changes. **Reads:** `setup/libraries.txt`, `kb/libraries/`. **Writes:** nothing.
+
+#### `mirabelle library rm <name>`
+Removes a library from this computer and from `setup/libraries.txt`, after your yes. Its copy at the home is kept.
+
+- **Writes:** deletes `kb/libraries/<name>/`; one line of `setup/libraries.txt`.
+- **Refuses when:** the library has unsaved changes, commits not pushed, or was never pushed (this computer would hold its only copy).
+
 ### 3.3 Working in a folder
 
-#### `mirabelle run -a <account> -i <identity> [-p <port>] [-n <name>] [--previous]`
+#### `mirabelle run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]`
 Starts this folder's container, with its firewall. Every step is printed.
 
 1. Takes the project name from the folder name, or from `-n`.
 2. Chooses the image: `mirabelle-<name>` if it exists, otherwise `mirabelle`. With `--previous`, the previous one of that image.
 3. Creates `sessions/<name>/` and `local/vscode-server/<name>/` if they do not exist.
 4. Writes the firewall's list for this container: the list for all projects, plus this project's list, plus the identity's hosts.
-5. Starts the container `mirabelle-<name>`: user `dev`, `--cap-drop ALL`, `no-new-privileges`, the mounts below, and the port on the PC's `localhost` if `-p` was given. Environment: the account token (`CLAUDE_CODE_OAUTH_TOKEN`, passed through Docker's environment, never on the command line), `MIRABELLE_PROJECT`, `CLAUDE_CONFIG_DIR=/session`, `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, the proxy settings (`HTTPS_PROXY` …), `GIT_CONFIG_GLOBAL=/identity/gitconfig`, and the certificate bundle (`SSL_CERT_FILE` …).
+5. Starts the container `mirabelle-<name>`: user `dev`, `--cap-drop ALL`, `no-new-privileges`, the mounts below, and the port on the PC's `localhost` if `-p` was given. Environment: the account token (`CLAUDE_CODE_OAUTH_TOKEN`, passed through Docker's environment, never on the command line), `MIRABELLE_PROJECT`, `MIRABELLE_LIBRARIES`, `CLAUDE_CONFIG_DIR=/session`, `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, the proxy settings (`HTTPS_PROXY` …), `GIT_CONFIG_GLOBAL=/identity/gitconfig`, and the certificate bundle (`SSL_CERT_FILE` …).
 6. Sets the firewall: `lock/apply.sh`, sent on standard input to one privileged `docker exec`. Then tests it: `lock/test.sh`, as `dev`, without privileges. If either fails, removes the container.
-7. Runs `lib/inside/start.sh` as `dev`: builds the certificate bundle (the system's plus the identity's), links every entry of `/kb/claude/` into `/session`, writes `/session/.gitignore`.
-8. Runs `/kb/start` if it exists and is executable. If it fails, says so; the container keeps running.
+7. Runs `lib/inside/start.sh` as `dev`: builds the certificate bundle (the system's plus the identity's), links every entry of `/kb/agent/claude/` into `/session`, writes `/session/.gitignore`, lists the libraries mounted.
+8. Runs `/kb/agent/start` if it exists and is executable. If it fails, says so; the container keeps running.
 9. Prints the summary and the next commands.
 
 | Mounted in the container | From the PC | Access |
 |---|---|---|
 | `/work/<name>` | the current folder | read-write |
-| `/kb` | `kb/` | read-write |
+| `/kb/agent` | `kb/agent/` | read-write |
+| `/kb/libraries/<library>` | `kb/libraries/<library>/`, one per `-l` | read-write |
 | `/session` | `sessions/<name>/` | read-write |
 | `/identity` | `setup/identities/<identity>/` | read-only |
 | `/identity-secret` | `secrets/identities/<identity>/` | read-only |
 | `/lock-run` | `local/lock/<name>/` | read-only |
 | `~/.vscode-server` | `local/vscode-server/<name>/` | read-write |
 
-- **Reads:** `secrets/accounts/<account>`, `setup/identities/<identity>/`, `setup/sites.txt`, `setup/projects/<name>/sites.txt`, `setup/lock/`, `setup/lib/inside/start.sh`, `kb/claude/`, `kb/start`.
+- **Reads:** `secrets/accounts/<account>`, `setup/identities/<identity>/`, `setup/sites.txt`, `setup/projects/<name>/sites.txt`, `setup/lock/`, `setup/lib/inside/start.sh`, `kb/agent/claude/`, `kb/agent/start`.
 - **Writes:** `local/lock/<name>/` (`allowed.txt`, `filter`, `private.txt`, `ports.txt`, `tinyproxy.conf`); the folders in step 3; links and `.gitignore` inside `sessions/<name>/`; one Docker container. Nothing in the project folder.
-- **Refuses when:** a container with that name already exists, the image is missing, or the account or identity does not exist.
+- **Refuses when:** a container with that name already exists, the image is missing, the account, identity or a library does not exist, or a library name is not valid.
 
 #### `mirabelle lock [-n <name>]`
 Re-applies the firewall to a running container, after a list changed.
@@ -222,7 +246,7 @@ Opens VS Code attached to the running container, at `/work/<name>`.
 Opens Claude in the running container. If a Claude session is already running there, reattaches to it.
 
 - **Reads / writes (mirabelle):** nothing.
-- **Claude itself** reads its configuration from the kb, writes its conversations to `sessions/<name>/`, and reads and writes `/work/<name>` and `/kb` as the work requires.
+- **Claude itself** reads its configuration from the agent, writes its conversations to `sessions/<name>/`, and reads and writes `/work/<name>`, `/kb/agent` and the picked libraries as the work requires.
 - **Refuses when:** the container is not running.
 
 #### `mirabelle shell [-n <name>]`
@@ -256,11 +280,11 @@ Starts the upgrade container and opens Claude in it.
 1. If the upgrade container is already running, reattaches to Claude and does nothing else.
 2. Prepares `proposed/`: creates it as a copy of setup if it does not exist; if it exists with no pending change, brings it up to date with setup; if it has pending changes, keeps them. Prints which.
 3. Creates `sessions/upgrade/` if needed and writes the firewall's list (the list for all projects only).
-4. Starts the container `mirabelle-upgrade` with `proposed/` at `/work/upgrade` (read-write), the kb, its session folder, the account token and `MIRABELLE_PROJECT=upgrade`. No identity, no Docker access.
-5. Sets and tests the firewall, links the kb's configuration, runs `/kb/start`, as `run` does.
+4. Starts the container `mirabelle-upgrade` with `proposed/` at `/work/upgrade` (read-write), the agent (`/kb/agent`, no libraries), its session folder, the account token and `MIRABELLE_PROJECT=upgrade`. No identity, no Docker access.
+5. Sets and tests the firewall, links the agent's configuration, runs `/kb/agent/start`, as `run` does.
 6. Opens Claude.
 
-- **Reads:** `setup/` (to copy), `secrets/accounts/<account>`, `setup/sites.txt`, `setup/lock/`, `kb/`.
+- **Reads:** `setup/` (to copy), `secrets/accounts/<account>`, `setup/sites.txt`, `setup/lock/`, `kb/agent/`.
 - **Writes:** `proposed/`, `sessions/upgrade/`, `local/lock/upgrade/`, `local/vscode-server/upgrade/`; one Docker container.
 - **Refuses when:** the image is missing or the account does not exist.
 
@@ -268,10 +292,10 @@ Starts the upgrade container and opens Claude in it.
 Shows what is pending. It does not contact the home.
 
 - Files that differ between `proposed/` and `setup/`.
-- Uncommitted changes in setup, kb and sessions.
+- Uncommitted changes in setup, kb/agent, sessions and each library.
 - Commits not yet pushed, as of the last push or pull.
 - Whether an image is older than its definition, or a project layer older than the base image.
-- **Reads:** the three repos and `proposed/`, Docker's image list. **Writes:** nothing.
+- **Reads:** the repos (setup, kb/agent, sessions, libraries) and `proposed/`, Docker's image list. **Writes:** nothing.
 
 #### `mirabelle apply`
 Brings the proposed changes into setup.
@@ -308,26 +332,26 @@ Undoes the last apply not yet undone, with plain git and without using mirabelle
 ### 3.5 Save, push, pull
 
 #### `mirabelle home [<path-or-url>]`
-Without an argument, prints the current home. With one, sets where the three repos are pushed and pulled: `<home>/mirabelle.git`, `<home>/kb.git`, `<home>/sessions.git`. If the home is a folder and those repos do not exist there, offers to create them.
+Without an argument, prints the current home. With one, sets where the repos are pushed and pulled: `<home>/mirabelle.git`, `<home>/agent.git`, `<home>/sessions.git`, `<home>/library-<name>.git`. If the home is a folder and those repos do not exist there, offers to create them.
 
 - **Writes:** the remote address in each repo's git configuration; possibly three empty repos at the home.
 
 #### `mirabelle save`
-Commits what is uncommitted in setup, kb and sessions, and lists the files. It does not contact the home.
+Commits what is uncommitted in setup, kb/agent, sessions and each library, and lists the files. It does not contact the home.
 
-- **Reads / writes:** the three repos.
+- **Reads / writes:** the repos (setup, kb/agent, sessions, libraries).
 - In sessions, a keep-list decides what is recorded: conversations and Claude's own state. Links and caches are left out.
 
 #### `mirabelle push`
-Pushes the three repos to the home, one after the other, and prints each result. It never forces. A refused push is reported and the others continue.
+Pushes the repos (setup, kb/agent, sessions, libraries) to the home, one after the other, and prints each result. It never forces. A refused push is reported and the others continue.
 
-- **Reads:** the three repos. **Writes:** the home.
+- **Reads:** the repos (setup, kb/agent, sessions, libraries). **Writes:** the home.
 - **Does not:** commit. It tells you if something is not saved.
 
 #### `mirabelle pull`
-Pulls the three repos from the home. For each repo it only moves forward to what the home has; it never merges or rewrites.
+Pulls setup first; then clones from the home every library listed in `setup/libraries.txt` that this computer does not have; then pulls kb/agent, sessions and the libraries. For each repo it only moves forward to what the home has; it never merges or rewrites.
 
-- **Reads:** the home. **Writes:** the three repos.
+- **Reads:** the home. **Writes:** the repos, `kb/libraries/`.
 - **Refuses, per repo, when:** the repo has unsaved changes, or has commits the home does not have. It names the repo and leaves it untouched.
 
 ---
@@ -341,7 +365,8 @@ Pulls the three repos from the home. For each repo it only moves forward to what
 | `setup/image/` | Image definition | setup | `apply` | No |
 | `setup/lock/` | The firewall's two scripts: `apply.sh` (privileged) and `test.sh` (as `dev`) | setup | `apply`, `rollback` | No (sent on standard input) |
 | `setup/lib/inside/start.sh` | What runs in a container at start, as `dev` | setup | `apply`, `rollback` | No (sent on standard input) |
-| `setup/kb-starter/` | Content of a new kb | setup | `apply` | No |
+| `setup/agent-starter/` | Content of a new agent | setup | `apply` | No |
+| `setup/libraries.txt` | The list of libraries | setup | `library add\|rm`, `apply` | No |
 | `setup/sites.txt` | Sites for all projects | setup | `site`, `apply` | No (its content is copied into the container's list) |
 | `setup/projects/<name>/sites.txt` | Sites for one project name | setup | `site`, `apply` | No (same) |
 | `setup/projects/<name>/Dockerfile` | Extra image layer for one project name | setup | `apply` | No |
@@ -349,9 +374,10 @@ Pulls the three repos from the home. For each repo it only moves forward to what
 | `setup/identities/<name>/hosts.txt` | Git hosts of the identity | setup | `host` | Same |
 | `setup/identities/<name>/ca/` | Certificates you chose to trust | setup | `host` | Same |
 | `proposed/` | Copy of setup for Claude to edit | its own copy of setup's history | `upgrade`, `apply`, `discard`, Claude | Only in the upgrade container, at `/work/upgrade` |
-| `kb/` | The kb | kb | Claude, you, `save` (commits) | Read-write, at `/kb`, in every container |
-| `kb/claude/` | Claude's configuration | kb | Claude, you | Same |
-| `kb/start` | Optional start script | kb | Claude, you | Same |
+| `kb/agent/` | The agent: shared part of the kb | kb/agent | Claude, you, `save` (commits) | Read-write, at `/kb/agent`, in every container |
+| `kb/agent/claude/` | Claude's configuration | kb/agent | Claude, you | Same |
+| `kb/agent/start` | Optional start script | kb/agent | Claude, you | Same |
+| `kb/libraries/<name>/` | One library | its own | Claude, you, `save` (commits) | Read-write, at `/kb/libraries/<name>`, only in containers started with `-l <name>` |
 | `sessions/<name>/` | Conversations and Claude's state for one project name | sessions | Claude, `run` (links), `save` (commits) | Read-write, at `/session`, in that project's container only |
 | `secrets/accounts/<name>` | Claude account token | No | `account` | As an environment variable, in containers started with that account |
 | `secrets/identities/<name>/git-credentials` | Git tokens of the identity | No | `host` | Read-only, at `/identity-secret`, in containers started with that identity |
@@ -366,6 +392,6 @@ Outside `~/mirabelle/`:
 |---|---|---|
 | Your project folders | Your code | You and Claude. Never mirabelle |
 | `~/.local/bin/mirabelle` | Link to the tool | `install.sh` |
-| The home | The three repos | `home` (creation), `push` |
+| The home | The repos (setup, kb/agent, sessions, libraries) | `home` (creation), `push` |
 | Docker's own storage | The images and the running containers | `build`, `prune`, `run`, `upgrade`, `account add`, `stop` |
 | VS Code's settings on Windows | Its note about an attached container | VS Code |

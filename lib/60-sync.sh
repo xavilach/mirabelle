@@ -1,13 +1,17 @@
 # shellcheck shell=bash
-# Save, push, pull, home: plain git on the three repos.
-#   setup    -> <home>/mirabelle.git
-#   kb       -> <home>/kb.git
-#   sessions -> <home>/sessions.git
-
-MB_REPOS=(setup kb sessions)
+# Save, push, pull, home: plain git on the repos (setup, kb/agent, sessions, libraries).
+#   setup               -> <home>/mirabelle.git
+#   kb/agent            -> <home>/agent.git
+#   sessions            -> <home>/sessions.git
+#   kb/libraries/<name> -> <home>/library-<name>.git   (see 45-library.sh)
 
 home_name() {   # repo folder -> name at the home
-  case "$1" in setup) echo mirabelle.git ;; *) echo "$1.git" ;; esac
+  case "$1" in
+    setup) echo mirabelle.git ;;
+    kb/agent) echo agent.git ;;
+    kb/libraries/*) echo "library-${1#kb/libraries/}.git" ;;
+    *) echo "$1.git" ;;
+  esac
 }
 
 repo_branch() { git -C "$MB_ROOT/$1" symbolic-ref --short HEAD; }
@@ -15,6 +19,7 @@ repo_branch() { git -C "$MB_ROOT/$1" symbolic-ref --short HEAD; }
 cmd_home() {
   [[ $# -le 1 ]] || die "usage: mirabelle home [<path-or-url>]"
   local r
+  local -a MB_REPOS; mapfile -t MB_REPOS < <(all_repos)
   if [[ $# -eq 0 ]]; then
     for r in "${MB_REPOS[@]}"; do
       printf '%-10s %s\n' "$r" "$(git -C "$MB_ROOT/$r" remote get-url origin 2>/dev/null || echo '(no home set)')"
@@ -54,6 +59,7 @@ cmd_home() {
 cmd_save() {
   [[ $# -eq 0 ]] || die "save takes no options"
   local r n any=0
+  local -a MB_REPOS; mapfile -t MB_REPOS < <(all_repos)
   for r in "${MB_REPOS[@]}"; do
     [[ -d "$MB_ROOT/$r/.git" ]] || continue
     n=$(git -C "$MB_ROOT/$r" status --porcelain | wc -l)
@@ -72,6 +78,7 @@ cmd_save() {
 cmd_push() {
   [[ $# -eq 0 ]] || die "push takes no options"
   local r b fail=0
+  local -a MB_REPOS; mapfile -t MB_REPOS < <(all_repos)
   for r in "${MB_REPOS[@]}"; do
     [[ -d "$MB_ROOT/$r/.git" ]] || continue
     if ! git -C "$MB_ROOT/$r" remote get-url origin >/dev/null 2>&1; then
@@ -79,10 +86,15 @@ cmd_push() {
     fi
     [[ -z "$(git -C "$MB_ROOT/$r" status --porcelain)" ]] || printf '%-10s has unsaved changes, not pushed (mirabelle save)\n' "$r"
     b=$(repo_branch "$r")
-    if run git -C "$MB_ROOT/$r" push -q --follow-tags -u origin "$b" 2>&1 | sed "s/^/           /"; [[ ${PIPESTATUS[0]} -eq 0 ]]; then
+    local out rc
+    out=$(run git -C "$MB_ROOT/$r" push -q --follow-tags -u origin "$b" 2>&1) && rc=0 || rc=$?
+    [[ -n "$out" ]] && sed 's/^/           /' <<<"$out"
+    if (( rc == 0 )); then
       printf '%-10s pushed %s\n' "$r" "$b"
+    elif grep -qE 'rejected|fetch first|non-fast-forward' <<<"$out"; then
+      printf '%-10s NOT pushed: the home has commits this computer does not (mirabelle pull first)\n' "$r"; fail=1
     else
-      printf '%-10s NOT pushed: the home has commits this computer does not (mirabelle pull), or the home is unreachable\n' "$r"; fail=1
+      printf '%-10s NOT pushed: cannot reach %s (does that repo exist at the home?)\n' "$r" "$(git -C "$MB_ROOT/$r" remote get-url origin)"; fail=1
     fi
   done
   return $fail
@@ -90,6 +102,22 @@ cmd_push() {
 
 cmd_pull() {
   [[ $# -eq 0 ]] || die "pull takes no options"
+  local r b before after fail=0
+  local -a MB_REPOS=(setup)
+  pull_repos || fail=1
+  # setup's libraries.txt may now name libraries this computer does not have.
+  local n
+  while read -r n; do
+    [[ -n "$n" && ! -d "$MB_LIBRARIES/$n" ]] || continue
+    [[ -d "$MB_LIBRARIES" ]] || run mkdir -p "$MB_LIBRARIES"
+    library_clone "$n" || { printf '%-10s %s\n' "kb/libraries/$n" "listed in setup but not at the home"; fail=1; }
+  done < <(library_names)
+  mapfile -t MB_REPOS < <(all_repos | grep -vx setup)
+  pull_repos || fail=1
+  return $fail
+}
+
+pull_repos() {   # pulls the repos in MB_REPOS
   local r b before after fail=0
   for r in "${MB_REPOS[@]}"; do
     [[ -d "$MB_ROOT/$r/.git" ]] || continue

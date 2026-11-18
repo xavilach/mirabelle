@@ -23,7 +23,7 @@ start_container() {
       -e NODE_EXTRA_CA_CERTS=/tmp/mirabelle/ca.crt
       -e REQUESTS_CA_BUNDLE=/tmp/mirabelle/ca.crt)
   add_proxy_env a
-  a+=(--mount "type=bind,src=$MB_KB,dst=/kb"
+  a+=(--mount "type=bind,src=$MB_AGENT,dst=/kb/agent"
       --mount "type=bind,src=$MB_SESSIONS/$project,dst=/session"
       --mount "type=bind,src=$MB_LOCAL/lock/$project,dst=/lock-run,readonly"
       --mount "type=bind,src=$MB_LOCAL/vscode-server/$project,dst=/home/dev/.vscode-server")
@@ -58,15 +58,16 @@ prepare_dirs() {   # prepare_dirs <project>
 
 cmd_run() {
   local account="" identity="" name="" previous=0
-  local -a ports=()
+  local -a ports=() libraries=()
   while (( $# )); do
     case "$1" in
       -a) account=${2:?-a needs an account}; shift 2 ;;
       -i) identity=${2:?-i needs an identity}; shift 2 ;;
       -p) ports+=("${2:?-p needs a port}"); shift 2 ;;
+      -l) libraries+=("${2:?-l needs a library name}"); shift 2 ;;
       -n) name=${2:?-n needs a name}; shift 2 ;;
       --previous) previous=1; shift ;;
-      *) die "run: unknown option '$1' (usage: mirabelle run -a <account> -i <identity> [-p <port>] [-n <name>] [--previous])" ;;
+      *) die "run: unknown option '$1' (usage: mirabelle run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous])" ;;
     esac
   done
   [[ -n "$account" ]]  || die "run: -a <account> is required (see: mirabelle account ls)"
@@ -86,17 +87,22 @@ cmd_run() {
   (( previous )) && image="$repo:previous"
   image_exists "$image" || die "image $image does not exist (build it: mirabelle build)"
 
-  local p
+  local p l
   for p in "${ports[@]}"; do [[ "$p" =~ ^[0-9]+$ ]] || die "-p: '$p' is not a port number"; done
+  for l in "${libraries[@]}"; do
+    need_name library "$l"
+    [[ -d "$MB_LIBRARIES/$l/.git" ]] || die "no library '$l' on this computer (see: mirabelle library ls)"
+  done
 
   line project "$project$([[ -z "$name" ]] && echo '                  (from the folder name)')"
   line account "$account"
   line identity "$identity"
   line image "$image"
   line mounts "$PWD → /work/$project  rw"
-  more "$MB_KB → /kb  rw"
+  more "$MB_AGENT → /kb/agent  rw"
   more "$MB_SESSIONS/$project → /session  rw"
   more "identity $identity → /identity  ro"
+  for l in "${libraries[@]}"; do more "$MB_LIBRARIES/$l → /kb/libraries/$l  rw"; done
   for p in "${ports[@]}"; do line port "container $p → PC localhost:$p"; done
 
   prepare_dirs "$project"
@@ -107,7 +113,10 @@ cmd_run() {
     --mount "type=bind,src=$MB_SETUP/identities/$identity,dst=/identity,readonly"
     --mount "type=bind,src=$MB_SECRETS/identities/$identity,dst=/identity-secret,readonly"
     -e GIT_CONFIG_GLOBAL=/identity/gitconfig
+    -e "MIRABELLE_LIBRARIES=${libraries[*]}"
+    --label "mirabelle.libraries=${libraries[*]}"
     -w "/work/$project")
+  for l in "${libraries[@]}"; do extra+=(--mount "type=bind,src=$MB_LIBRARIES/$l,dst=/kb/libraries/$l"); done
   for p in "${ports[@]}"; do extra+=(-p "127.0.0.1:$p:$p"); done
 
   start_container project "$project" "$c" "$image" "$account" "$identity" "${extra[@]}"
@@ -189,9 +198,9 @@ cmd_ps() {
   need_docker
   local out
   out=$(query docker ps --filter label=mirabelle.project \
-    --format '{{.Label "mirabelle.project"}}\t{{.Label "mirabelle.kind"}}\t{{.Label "mirabelle.account"}}\t{{.Label "mirabelle.identity"}}\t{{.RunningFor}}\t{{.Label "mirabelle.folder"}}')
+    --format '{{.Label "mirabelle.project"}}\t{{.Label "mirabelle.kind"}}\t{{.Label "mirabelle.account"}}\t{{.Label "mirabelle.identity"}}\t{{.Label "mirabelle.libraries"}}\t{{.RunningFor}}\t{{.Label "mirabelle.folder"}}')
   if [[ -z "$out" ]]; then say "no mirabelle container is running"; return 0; fi
-  { printf 'PROJECT\tKIND\tACCOUNT\tIDENTITY\tSTARTED\tFOLDER\n'; printf '%s\n' "$out"; } | table
+  { printf 'PROJECT\tKIND\tACCOUNT\tIDENTITY\tLIBRARIES\tSTARTED\tFOLDER\n'; printf '%s\n' "$out"; } | table
 }
 
 cmd_inspect() {
@@ -201,6 +210,7 @@ cmd_inspect() {
   line folder "$(label_of "$c" mirabelle.folder)"
   line account "$(label_of "$c" mirabelle.account)"
   line identity "$(label_of "$c" mirabelle.identity)"
+  line libraries "$(label_of "$c" mirabelle.libraries)"
   line image "$(label_of "$c" mirabelle.image)  ($(docker container inspect -f '{{.Image}}' "$c" | cut -c1-19))"
   line started "$(docker container inspect -f '{{.State.StartedAt}}' "$c")"
   say "mounts:"

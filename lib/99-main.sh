@@ -6,7 +6,7 @@ usage() {
 mirabelle: Claude in a container, per project folder, behind a firewall.
 
 Working in a folder (uses the folder's name, or -n <name>)
-  run -a <account> -i <identity> [-p <port>] [-n <name>] [--previous]
+  run -a <account> -i <identity> [-l <library>]... [-p <port>] [-n <name>] [--previous]
                      start this folder's container, with its firewall
   code               open VS Code attached to the running container
   claude [-- args]   open Claude in the running container (again to reattach)
@@ -27,6 +27,7 @@ Accounts, identities, sites
   identity add|ls|rm <name>                    git identities
   host add|ls|rm <identity> [<https-url>]      git hosts of an identity
   site add|ls|rm <domain> [-n <project>]       sites the firewall allows
+  library add|ls|rm <name>                     libraries, picked per run with -l
 
 Upgrading mirabelle
   upgrade -a <account>   start the upgrade container and open Claude in it
@@ -37,9 +38,9 @@ Upgrading mirabelle
 
 Save and sync (plain git)
   home [<path-or-url>]   show or set where push and pull go
-  save                   commit what is uncommitted in setup, kb, sessions
-  push                   push the three repos
-  pull                   pull the three repos
+  save                   commit what is uncommitted in setup, kb/agent, sessions, libraries
+  push                   push them all
+  pull                   pull them all (and clone libraries listed but missing)
 
 Every command accepts -v (show the docker and git commands) and --dry-run
 (show them without running anything that changes something).
@@ -72,6 +73,7 @@ main() {
     identity) cmd_identity "$@" ;;
     host)     cmd_host "$@" ;;
     site)     cmd_site "$@" ;;
+    library)  cmd_library "$@" ;;
     upgrade)  cmd_upgrade "$@" ;;
     status)   cmd_status "$@" ;;
     apply)    cmd_apply "$@" ;;

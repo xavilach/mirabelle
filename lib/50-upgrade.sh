@@ -62,7 +62,7 @@ cmd_upgrade() {
   line account "$account"
   line image mirabelle:latest
   line mounts "$MB_PROPOSED → /work/upgrade  rw  (mirabelle's full source)"
-  more "$MB_KB → /kb  rw"
+  more "$MB_AGENT → /kb/agent  rw"
   more "$MB_SESSIONS/upgrade → /session  rw"
   more "no identity, no Docker access; the firewall is on"
 
@@ -84,9 +84,9 @@ part_of() {
     bin/*|lib/*|install.sh|rescue.sh) echo tool ;;
     image/*|projects/*/Dockerfile)    echo image ;;
     lock/*)                           echo firewall ;;
-    sites.txt|projects/*/sites.txt)   echo lists ;;
+    sites.txt|projects/*/sites.txt|libraries.txt) echo lists ;;
     identities/*)                     echo identities ;;
-    docs/*|README.md|kb-starter/*)    echo documentation ;;
+    docs/*|README.md|agent-starter/*) echo documentation ;;
     *)                                echo other ;;
   esac
 }
@@ -109,7 +109,8 @@ cmd_status() {
 
   say "not saved (mirabelle save):"
   local r n any=0
-  for r in setup kb sessions; do
+  local -a repos; mapfile -t repos < <(all_repos)
+  for r in "${repos[@]}"; do
     [[ -d "$MB_ROOT/$r/.git" ]] || continue
     n=$(git -C "$MB_ROOT/$r" status --porcelain | wc -l)
     (( n )) && { printf '  %-10s %s changed file(s)\n' "$r" "$n"; any=1; }
@@ -118,7 +119,7 @@ cmd_status() {
 
   say "not pushed (mirabelle push), as of the last push or pull:"
   any=0
-  for r in setup kb sessions; do
+  for r in "${repos[@]}"; do
     [[ -d "$MB_ROOT/$r/.git" ]] || continue
     if ! git -C "$MB_ROOT/$r" rev-parse -q --verify '@{upstream}' >/dev/null 2>&1; then
       git -C "$MB_ROOT/$r" remote get-url origin >/dev/null 2>&1 || { printf '  %-10s no home set (mirabelle home <path-or-url>)\n' "$r"; any=1; continue; }
